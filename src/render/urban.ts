@@ -145,7 +145,7 @@ export class UrbanLayer {
       const at = HEAD_LIGHT.clone().applyAxisAngle(up, p.yaw);
       // Heads face the model's +Z: only traffic in front sees them (and their reflection).
       const facing = new THREE.Vector3(Math.sin(p.yaw), 0, Math.cos(p.yaw));
-      return { x: p.x + at.x, y: p.y + at.y, z: p.z + at.z, groundY: p.y, radius: 9, color: white, intensity: 1.6, facing, signal: [p.group, p.offset] };
+      return { x: p.x + at.x, y: p.y + at.y, z: p.z + at.z, groundY: p.y, radius: 5, color: white, intensity: 0.5, facing, signal: [p.group, p.offset] };
     });
     this.lights.build(lights, grid);
     this.lights.setHaloRange(this.lodDistance * 0.08, this.lodDistance * 0.35);

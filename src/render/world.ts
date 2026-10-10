@@ -16,6 +16,7 @@ import { RenderPipeline } from './pipeline/index.ts';
 import type { QualitySettings } from './quality.ts';
 import { Culler, type CullStats } from './culling.ts';
 import type { FogUniforms } from './atmosphere.ts';
+import { SPRITE_PITCH_COUNT, type SpriteShadeUniforms } from './billboard.ts';
 import { profiler } from '../core/profiler.ts';
 
 export interface TerrainTextures {
@@ -43,6 +44,8 @@ export interface Environment {
   starRotation: THREE.Matrix3;
   /** Aerial perspective / sky LUT uniforms of the fog chunk (Atmosphere.fog), spread into every map material. */
   fog: FogUniforms;
+  /** Sun shadow lookup + occlusion strength for far-LOD sprites (filled by Lighting each frame). */
+  spriteShade: SpriteShadeUniforms;
   /** 0 (night) - 1 (day): overall sky brightness, for shaders without their own ambient term. */
   daylight: { value: number };
   /** Hour of the day, 0-24 (window light schedules). */
@@ -163,10 +166,19 @@ export class World {
     if (profiler.isRecording) profiler.count('build', 'queued jobs', this.pipeline.pending);
   }
 
+  private sceneEpoch = 0;
+
+  /** Changes whenever what casts shadows changed (meshes built / rewritten, buildings destroyed or repaired): a cached shadow map is then stale. */
+  get shadowEpoch(): number {
+    return this.sceneEpoch + this.buildings.changes;
+  }
+
   /** Registers added / removed / rewritten meshes with the culler and the shadow-pass exclusions. */
   private syncScene(): void {
+    this.sceneEpoch++;
     // Every chunk mesh of every layer gets a frustum test per frame.
     const t = profiler.begin('build', 'scene sync (culler registration)');
+    this.ground.flushSupers();
     this.culler.sync(this.group, 1); // margin: tree sway, ribbon lift
     for (const g of [this.roads.group, this.bases.group]) g.traverse((o) => (o.userData.noShadow = true));
     this.noShadow = [];
@@ -197,14 +209,22 @@ export class World {
 
   /** Re-bakes the far-LOD sprites after the lighting changed (they carry baked shading). */
   refreshSprites(): void {
-    this.trees.rebake();
-    this.rocks.rebake();
+    // `update` bakes one pitch column per frame (a full re-bake in one frame is a ~20 ms spike). A change during a sweep
+    // doesn't restart it (dragging the time slider would keep re-baking the first columns only): another sweep follows.
+    if (this.spriteColumn < SPRITE_PITCH_COUNT) this.spriteRebakeQueued = true;
+    else this.spriteColumn = 0;
   }
+
+  /** Next pitch column of the sprite atlases to re-bake; SPRITE_PITCH_COUNT = nothing pending. */
+  private spriteColumn = SPRITE_PITCH_COUNT;
+  /** The light changed again during the current sweep. */
+  private spriteRebakeQueued = false;
 
   /** Hides chunk meshes outside the camera frustum. Call once per frame before rendering. */
   cull(camera: THREE.Camera, lodCamera: THREE.Object3D = camera): CullStats {
     return profiler.scope('cull', 'main view (frustum + LOD)', () => {
-      for (const o of this.noShadow) o.visible = true; // undo a preceding shadow pass
+      // Undo a preceding shadow pass for what the Culler doesn't manage (groups, uncullable meshes); it re-shows the rest itself.
+      for (const o of this.noShadow) if (!(o instanceof THREE.Mesh) || o.userData.noCull) o.visible = true;
       return this.culler.update(camera, lodCamera);
     });
   }
@@ -226,6 +246,17 @@ export class World {
    * billboards face it (a frozen debug camera keeps all of that put while another camera looks around).
    */
   update(time: number, game: THREE.Camera): void {
+    if (this.spriteColumn < SPRITE_PITCH_COUNT) {
+      const col = this.spriteColumn++;
+      profiler.scope('time of day', 'sprite re-bake (one column)', () => {
+        this.trees.rebakeColumn(col);
+        this.rocks.rebakeColumn(col);
+      });
+      if (this.spriteColumn === SPRITE_PITCH_COUNT && this.spriteRebakeQueued) {
+        this.spriteRebakeQueued = false;
+        this.spriteColumn = 0;
+      }
+    }
     game.updateMatrixWorld();
     this.fogOrigin.value.setFromMatrixPosition(game.matrixWorld);
     const { gameRight, gameUp } = this.lights.uniforms;

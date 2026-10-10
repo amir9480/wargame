@@ -76,8 +76,10 @@ void main() {
   float snowW = smoothstep(snowLine - 5.0, snowLine + 5.0, h + (macro - 0.4) * 16.0)
               * (1.0 - smoothstep(0.25, 0.45, slope + (macro - 0.4) * 0.2)); // slides off faces steeper than ~40 degrees
 
-  vec3 grass = sampleTex(tGrass, uv, dx, dy, detail);
-  vec3 dirt  = sampleTex(tDirt, uv, dx, dy, detail);
+  // Each ground texture only where it shows (gradients were taken above, outside the branches).
+  float dirtPatch = smoothstep(0.55, 0.75, macro) * 0.25 * (1.0 - dirtW);
+  vec3 grass = dirtW < 1.0 ? sampleTex(tGrass, uv, dx, dy, detail) : vec3(0.0);
+  vec3 dirt = (dirtW > 0.0 || dirtPatch > 0.0 || under > 0.0) ? sampleTex(tDirt, uv, dx, dy, detail) : vec3(0.0);
   // Late autumn: dead, straw-olive grass instead of fresh green; cold dull mud.
   grass = mix(vec3(dot(grass, vec3(0.33))), grass, 0.7) * vec3(1.12, 0.96, 0.7);
   dirt *= vec3(0.9, 0.9, 0.95);
@@ -87,7 +89,7 @@ void main() {
   vec3 bare = mix(dirt, vec3(dot(dirt, vec3(0.33))), 0.25) * vec3(1.22, 1.14, 1.0);
   vec3 col = mix(grass, bare, dirtW);
   // A little dirt showing through the grass in places, as before.
-  col = mix(col, dirt, smoothstep(0.55, 0.75, macro) * 0.25 * (1.0 - dirtW));
+  col = mix(col, dirt, dirtPatch);
   // Forest floor: darker, mossier under the canopy.
   col *= 1.0 - cover.g * 0.3;
 

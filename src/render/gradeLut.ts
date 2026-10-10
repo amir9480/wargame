@@ -21,9 +21,20 @@ const smooth = (a: number, b: number, x: number): number => {
 const decode = (c: number): number => (c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4);
 const encode = (c: number): number => (c <= 0.0031308 ? c * 12.92 : 1.055 * c ** (1 / 2.4) - 0.055);
 
+/** Blue slices (of GRADE_LUT_SIZE) built per `bake` call while a new table is being made. */
+const SLICES_PER_CALL = 4;
+const SHADOW_TINT = [0.88, 0.98, 1.16];
+const MID_TINT = [1.05, 1.03, 0.9];
+/** The decoded (linear) value of every table coordinate. */
+const LINEAR = Array.from({ length: GRADE_LUT_SIZE }, (_, i) => decode(i / (GRADE_LUT_SIZE - 1)));
+
 export class GradeLut {
   readonly texture: THREE.Data3DTexture;
   private data = new Uint8Array(GRADE_LUT_SIZE ** 3 * 4);
+  /** Table being built (swapped in once complete, so the picture never mixes two grades) and its progress. */
+  private next = new Uint8Array(GRADE_LUT_SIZE ** 3 * 4);
+  private building = -1;
+  private slice = 0;
   private baked = -1;
 
   constructor() {
@@ -34,33 +45,55 @@ export class GradeLut {
     this.texture.minFilter = this.texture.magFilter = THREE.LinearFilter;
     this.texture.wrapS = this.texture.wrapT = this.texture.wrapR = THREE.ClampToEdgeWrapping;
     this.texture.unpackAlignment = 1;
-    this.bake(1);
+    this.fill(this.data, 16, 0, n); // the first table at once
+    this.baked = 16;
+    this.texture.needsUpdate = true; // a texture at version 0 is never uploaded: it would sample as black until the first swap
   }
 
-  /** Rebuilds the table for `daylight` (0 night - 1 day); skipped while it is within 1/16 of the last bake. */
+  /**
+   * Moves the table towards `daylight` (0 night - 1 day): when it is a different 1/16 step than the last table, a new one is
+   * built a few slices per call (~1/8 of the work each) and swapped in when done. A grade change in the middle of a build
+   * waits for the next one, so a fast day cycle can't starve it.
+   */
   bake(daylight: number): void {
     const step = Math.round(daylight * 16);
-    if (step === this.baked) return;
-    this.baked = step;
+    if (this.building < 0) {
+      if (step === this.baked) return;
+      this.building = step;
+      this.slice = 0;
+    }
+    const to = Math.min(GRADE_LUT_SIZE, this.slice + SLICES_PER_CALL);
+    this.fill(this.next, this.building, this.slice, to);
+    this.slice = to;
+    if (to < GRADE_LUT_SIZE) return;
+    [this.data, this.next] = [this.next, this.data];
+    this.texture.image.data = this.data;
+    this.texture.needsUpdate = true;
+    this.baked = this.building;
+    this.building = -1;
+  }
+
+  /** Writes blue slices `from`..`to` - 1 of the table for day step `step` (of 16) into `out`. */
+  private fill(out: Uint8Array, step: number, from: number, to: number): void {
     const day = step / 16;
     const n = GRADE_LUT_SIZE;
     const tint = TINT_NIGHT.map((v, i) => v + (TINT_DAY[i] - v) * day);
     // Night: colours stay a little more drained, shadows colder.
     const sat = SATURATION * (0.9 + 0.1 * day);
-    const out = this.data;
-    let o = 0;
-    for (let b = 0; b < n; b++) {
+    let o = from * n * n * 4;
+    for (let b = from; b < to; b++) {
       for (let g = 0; g < n; g++) {
         for (let r = 0; r < n; r++) {
-          const lin = [decode(r / (n - 1)), decode(g / (n - 1)), decode(b / (n - 1))];
-          const gl = 0.2126 * lin[0] + 0.7152 * lin[1] + 0.0722 * lin[2];
+          const lin0 = LINEAR[r], lin1 = LINEAR[g], lin2 = LINEAR[b];
+          const gl = 0.2126 * lin0 + 0.7152 * lin1 + 0.0722 * lin2;
           const shadow = 1 - smooth(0, 0.25, gl);
           const mid = smooth(0.03, 0.2, gl) * (1 - smooth(0.35, 1, gl));
           for (let c = 0; c < 3; c++) {
-            let v = gl + (lin[c] - gl) * sat;
+            const lin = c === 0 ? lin0 : c === 1 ? lin1 : lin2;
+            let v = gl + (lin - gl) * sat;
             v *= tint[c];
-            v *= 1 + ([0.88, 0.98, 1.16][c] - 1) * shadow;
-            v *= 1 + ([1.05, 1.03, 0.9][c] - 1) * mid;
+            v *= 1 + (SHADOW_TINT[c] - 1) * shadow;
+            v *= 1 + (MID_TINT[c] - 1) * mid;
             const p = Math.min(1, Math.max(0, encode(Math.max(v, 0))));
             const curved = p + (p * p * (3 - 2 * p) - p) * CONTRAST;
             out[o++] = Math.round(Math.min(1, Math.max(0, curved * 0.96 + BLACK_POINT[c])) * 255);
@@ -69,7 +102,6 @@ export class GradeLut {
         }
       }
     }
-    this.texture.needsUpdate = true;
   }
 
   dispose(): void {

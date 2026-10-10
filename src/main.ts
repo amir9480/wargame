@@ -4,6 +4,7 @@ import { Engine, type LoadProgress, type MapInfo } from './engine.ts';
 import { normalizeSeed, MAX_SEED } from './core/rng.ts';
 import { DEFAULT_HOUR } from './render/timeOfDay.ts';
 import { DEFAULT_QUALITY, QUALITY_SETTINGS, isQuality, type Quality, type QualitySettings } from './render/quality.ts';
+import { DEBUG_VIEWS, isDebugView, type DebugView } from './render/debugView.ts';
 import type { CameraView } from './render/rtsCamera.ts';
 import { profiler } from './core/profiler.ts';
 
@@ -97,6 +98,9 @@ Alpine.data('mapPanel', () => ({
   chunks: 0,
   maxSeed: MAX_SEED,
   quality: saved.quality as Quality,
+  /** Debug view of the render pipeline (not persisted). */
+  debugView: 'final' as DebugView,
+  debugViews: DEBUG_VIEWS,
   hour: saved.hour as number | string,
   error: engineError,
   /** Buildings destroyed on the current map (destruction test buttons). */
@@ -160,6 +164,16 @@ Alpine.data('mapPanel', () => ({
     if (!isQuality(this.quality)) return;
     if (engine) engine.quality = this.quality;
     save({ quality: this.quality });
+    // Views built from the post pass don't exist on low quality.
+    if (this.quality === 'low' && DEBUG_VIEWS.some((v) => v.id === this.debugView && v.post)) {
+      this.debugView = 'final';
+      this.setDebugView();
+    }
+  },
+
+  setDebugView() {
+    if (!isDebugView(this.debugView)) return;
+    if (engine) engine.debugView = this.debugView;
   },
 
   /** Destruction test: knocks down a random tenth of the standing buildings (gameplay will do this per hit). */

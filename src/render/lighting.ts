@@ -20,6 +20,7 @@ import { profiler, POST_PASS, ABLATION } from '../core/profiler.ts';
 const PROBE_CYCLE = 30;import aoFragment from './shaders/ao.frag.glsl';
 import type { QualitySettings } from './quality.ts';
 import { Bloom, BLOOM_STRENGTH, GodRays } from './postfx.ts';
+import { DEBUG_SHADER_ID, type DebugView } from './debugView.ts';
 
 /** Final pass look (final.frag.glsl, every quality). The colour grade itself is the LUT in gradeLut.ts. */
 const VIGNETTE = 0.35;
@@ -33,6 +34,8 @@ const REGION_PER_DISTANCE = 0.45;
 const REGION_MIN = 130; // close zoom still sees far ground towards the horizon: cover the whole screen
 const REGION_MAX = 200;
 const SHADOW_FADE_END = 700; // camera distance (m) beyond which nothing is shadowed (post.frag.glsl SHADOW_FADE_END)
+const SHADOW_SUN_STEP = 0.0045; // radians (~0.25 deg) the sun may move before the cached shadow map is redrawn
+const SHADOW_CAMERA_STEP = 6; // m the (culling) camera may move before it: casters switch detail level by camera distance
 /** Ambient occlusion sample radius, world units. */
 const AO_RADIUS = 3;
 
@@ -62,7 +65,25 @@ export class Lighting {
     polygonOffsetFactor: 2,
     polygonOffsetUnits: 4,
   });
+  /** Debug view (see debugView.ts); the ones that need the post pass show the normal image where it is off (low quality). */
+  debugView: DebugView = 'final';
+  /** Triangles views: every mesh redrawn with one of these (solid dark fill for occlusion, then white lines nudged towards the camera). */
+  private wireFill = new THREE.MeshBasicMaterial({ color: 0x06080b, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1, toneMapped: false });
+  private wireLine = (() => {
+    const m = new THREE.MeshBasicMaterial({ color: 0xcfe6ff, wireframe: true, depthWrite: false, toneMapped: false });
+    m.onBeforeCompile = (shader) => {
+      shader.vertexShader = shader.vertexShader.replace('#include <project_vertex>', '#include <project_vertex>\n gl_Position.z -= 3e-4 * gl_Position.w;');
+    };
+    return m;
+  })();
   private lightCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 1, 100);
+  /**
+   * Shadow map cache: the map holds what the light camera saw when it was last drawn. It is redrawn only when the sun moved
+   * `SHADOW_SUN_STEP` radians, the (texel-snapped) light camera view or its region changed, the main camera moved
+   * `SHADOW_CAMERA_STEP` m (casters' detail levels), or the casters changed
+   * (`World.shadowEpoch`); otherwise last frame's map is used as is, with the light camera left where it was.
+   */
+  private shadowCache = { valid: false, ix: 0, iy: 0, region: 0, epoch: -1, sun: new THREE.Vector3(), cam: new THREE.Vector3(), right: new THREE.Vector3(), up: new THREE.Vector3() };
   private lightRight = new THREE.Vector3();
   private lightUp = new THREE.Vector3();
   private basisCamera = new THREE.OrthographicCamera(); // camera convention: looks down -Z, like the light camera
@@ -108,8 +129,8 @@ export class Lighting {
     this.enabled = settings.post;
     renderer.getDrawingBufferSize(this.size);
 
-    this.lightTarget = new THREE.WebGLRenderTarget(this.size.x, this.size.y, { type: THREE.HalfFloatType, depthBuffer: false });
-    this.rayTarget = new THREE.WebGLRenderTarget(Math.ceil(this.size.x / 2), Math.ceil(this.size.y / 2), { type: THREE.HalfFloatType, depthBuffer: false });
+    this.lightTarget = new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType, depthBuffer: false });
+    this.rayTarget = new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType, depthBuffer: false });
     this.rayTarget.texture.minFilter = this.rayTarget.texture.magFilter = THREE.LinearFilter;
     const half = (type: THREE.TextureDataType, format: THREE.PixelFormat) =>
       new THREE.WebGLRenderTarget(Math.ceil(this.size.x / 2), Math.ceil(this.size.y / 2), {
@@ -135,6 +156,7 @@ export class Lighting {
         tRay: { value: this.rayTarget.texture },
         rayOn: { value: 0 },
         lightOn: { value: 0 },
+        lightSize: { value: new THREE.Vector2(1, 1) },
         invViewProj: { value: new THREE.Matrix4() },
         viewProj: { value: new THREE.Matrix4() },
         shadowVP: { value: new THREE.Matrix4() },
@@ -161,6 +183,7 @@ export class Lighting {
         ...this.gradeUniforms,
         aoStrength: { value: 1 },
         shadowStrength: { value: 1 },
+        debugView: { value: 0 },
         contactLength: { value: 4 },
         shadowTaps: { value: 4 },
         contactSteps: { value: 14 },
@@ -229,10 +252,17 @@ export class Lighting {
     this.enabled = settings.post;
     this.renderer.getDrawingBufferSize(this.size);
     this.buildTargets();
-    this.lightTarget.setSize(this.size.x, this.size.y);
-    this.rayTarget.setSize(Math.ceil(this.size.x / 2), Math.ceil(this.size.y / 2));
+    this.sizeLightTargets();
     this.resizeAO();
     this.applyFinalSettings();
+  }
+
+  /** Deferred light buffer and light ray / reflection target: a share of the screen (`QualitySettings.lightResolution`). */
+  private sizeLightTargets(): void {
+    const s = this.settings.lightResolution;
+    const w = Math.max(1, Math.ceil(this.size.x * s)), h = Math.max(1, Math.ceil(this.size.y * s));
+    this.lightTarget.setSize(w, h);
+    this.rayTarget.setSize(w, h);
   }
 
   private resizeAO(): void {
@@ -265,6 +295,7 @@ export class Lighting {
       type: THREE.UnsignedByteType,
     });
     this.shadowAllocated = false;
+    this.shadowCache.valid = false;
 
     this.ldrTarget?.dispose();
     this.ldrTarget = new THREE.WebGLRenderTarget(this.size.x, this.size.y, { depthBuffer: false });
@@ -309,8 +340,7 @@ export class Lighting {
     this.renderer.getDrawingBufferSize(this.size);
     this.sceneTarget.setSize(this.size.x, this.size.y);
     this.ldrTarget.setSize(this.size.x, this.size.y);
-    this.lightTarget.setSize(this.size.x, this.size.y);
-    this.rayTarget.setSize(Math.ceil(this.size.x / 2), Math.ceil(this.size.y / 2));
+    this.sizeLightTargets();
     this.resizeAO();
     this.applyFinalSettings();
   }
@@ -325,11 +355,12 @@ export class Lighting {
     const r = this.renderer;
     world.setSpriteMark(this.enabled);
     if (!this.enabled) {
+      this.env.spriteShade.spriteShadow.value = 0; // no shadow map without the post pass
       const stats = world.cull(cullCamera);
       profiler.scope('cull', 'overlay light quads', () => world.lights.cull(cullCamera)); // the deferred volumes are not drawn here
       // No post pass: draw into the scene target (no MSAA), grade it, then the final pass puts it on the screen.
       profiler.scope('render', 'grade LUT bake', () => this.gradeLut.bake(this.env.daylight.value));
-      profiler.group('scene (HDR)', () => this.drawLayers('scene (HDR)', scene, camera, world, this.sceneTarget));
+      profiler.group('scene (HDR)', () => this.drawMain(scene, camera, world));
       profiler.pass('grade', () => {
         this.gradeMaterial.uniforms.tColor.value = this.sceneTarget.texture;
         this.postQuad.material = this.gradeMaterial;
@@ -340,7 +371,8 @@ export class Lighting {
       return stats;
     }
 
-    const region = Math.min(REGION_MAX, Math.max(REGION_MIN, distance * REGION_PER_DISTANCE));
+    // In 4 m steps: the smoothed zoom keeps creeping for seconds, which would redraw the cached shadow map every frame.
+    const region = Math.min(REGION_MAX, Math.max(REGION_MIN, Math.round((distance * REGION_PER_DISTANCE) / 4) * 4));
     // Direct-light shadows fade out as the sun sets; with the sun down there is nothing to cast them.
     const sunFactor = THREE.MathUtils.smoothstep(this.sunDir.y, 0.03, 0.22);
     const lum = (c: THREE.Color) => (c.r + c.g + c.b) / 3;
@@ -349,14 +381,32 @@ export class Lighting {
     // The whole shadow region beyond the fade range of the camera: no receiver, skip the pass.
     const shadowsInRange = camera.position.distanceTo(focus) - region * Math.SQRT2 < SHADOW_FADE_END;
     if (sunFactor > 0.001 && shadowsInRange) {
-      profiler.scope('render', 'shadow camera setup', () => this.updateLightCamera(focus, region));
-      world.cullShadow(this.lightCamera, cullCamera);
-      // The sky dome is on its own layer, which the light camera doesn't see.
-      profiler.group('shadow map', () => {
-        scene.overrideMaterial = this.depthMaterial;
-        this.drawLayers('shadow map', scene, this.lightCamera, world, this.shadowTarget);
-        scene.overrideMaterial = null;
-      });
+      // Would the light camera see something different from what the map holds? Its centre snaps to a texel grid in the
+      // light space of the last draw (`cache.right / up`): the same grid cell, sun and casters mean the same picture.
+      const cache = this.shadowCache;
+      const texel = (2 * region) / this.shadowSize;
+      const ix = Math.round(focus.dot(cache.right) / texel), iy = Math.round(focus.dot(cache.up) / texel);
+      const epoch = world.shadowEpoch;
+      // Casters are drawn at the main camera's detail levels, so a camera that moved (zoom, rotation) changes them too.
+      const stale = !cache.valid || !this.shadowAllocated || cache.region !== region || cache.epoch !== epoch || ix !== cache.ix || iy !== cache.iy
+        || this.sunDir.dot(cache.sun) < Math.cos(SHADOW_SUN_STEP)
+        || cullCamera.position.distanceToSquared(cache.cam) > SHADOW_CAMERA_STEP * SHADOW_CAMERA_STEP;
+      profiler.count('shadow', 'map redraws (1 = redrawn this frame)', stale ? 1 : 0);
+      if (stale) {
+        profiler.scope('render', 'shadow camera setup', () => this.updateLightCamera(this.lightCamera, focus, region));
+        cache.valid = true; cache.region = region; cache.epoch = epoch;
+        cache.right.copy(this.lightRight); cache.up.copy(this.lightUp);
+        cache.ix = Math.round(focus.dot(cache.right) / texel); cache.iy = Math.round(focus.dot(cache.up) / texel);
+        cache.sun.copy(this.sunDir);
+        cache.cam.copy(cullCamera.position);
+        world.cullShadow(this.lightCamera, cullCamera);
+        // The sky dome is on its own layer, which the light camera doesn't see.
+        profiler.group('shadow map', () => {
+          scene.overrideMaterial = this.depthMaterial;
+          this.drawLayers('shadow map', scene, this.lightCamera, world, this.shadowTarget);
+          scene.overrideMaterial = null;
+        });
+      }
       this.shadowAllocated = true;
     } else if (!this.shadowAllocated) {
       r.setRenderTarget(this.shadowTarget);
@@ -364,9 +414,20 @@ export class Lighting {
       this.shadowAllocated = true;
     }
 
+    // Far-LOD sprites look the shadow map up themselves (before the scene is drawn, unlike the post uniforms below).
+    const shade = this.env.spriteShade;
+    const sunShare = (lum(this.env.sunColor) * 0.85 * 0.6) / (lum(this.env.skyAmbient) * 0.8 + lum(this.env.groundAmbient) * 0.2 + lum(this.env.sunColor) * 0.85 * 0.6);
+    shade.spriteShadow.value = sunFactor > 0.001 && shadowsInRange ? sunShare * sunFactor : 0;
+    shade.spriteAO.value = 0.4 + 0.6 * sunFactor;
+    shade.tShadow.value = this.shadowTarget.depthTexture;
+    shade.shadowVP.value.multiplyMatrices(this.lightCamera.projectionMatrix, this.lightCamera.matrixWorldInverse);
+    shade.focus.value.copy(focus);
+    shade.regionR.value = region;
+    shade.shadowRange.value = this.lightCamera.far - this.lightCamera.near;
+
     // 2. Main view into the HDR target.
     const stats = world.cull(cullCamera);
-    profiler.group('scene (HDR)', () => this.drawLayers('scene (HDR)', scene, camera, world, this.sceneTarget));
+    profiler.group('scene (HDR)', () => this.drawMain(scene, camera, world));
 
     camera.updateMatrixWorld();
     this.viewProj.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
@@ -380,6 +441,7 @@ export class Lighting {
     lu.tDepth.value = this.sceneTarget.depthTexture;
     lu.invViewProj.value.copy(u.invViewProj.value);
     lu.resolution.value.copy(this.size);
+    (lu.lightResolution.value as THREE.Vector2).set(this.lightTarget.width, this.lightTarget.height);
     const lightsDrawn = profiler.scope('cull', 'light volumes', () => field.cull(cullCamera));
     profiler.count('lights', 'light volumes drawn', lightsDrawn);
     if (lightsDrawn > 0 || !this.lightAllocated) {
@@ -391,6 +453,7 @@ export class Lighting {
       this.lightAllocated = true;
     }
     u.lightOn.value = lightsDrawn > 0 ? 1 : 0;
+    (u.lightSize.value as THREE.Vector2).set(this.lightTarget.width, this.lightTarget.height);
 
     // 3b. Light rays: a half-resolution march through the beams, using the same scene depth.
     lu.tNoise.value = u.tNoise.value;
@@ -426,9 +489,10 @@ export class Lighting {
     u.pxScale.value = this.size.y / (2 * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2));
     u.camNear.value = camera.near;
     u.camFar.value = camera.far;
-    u.texelWorld.value = (2 * region) / this.shadowSize;
+    u.texelWorld.value = (2 * (this.shadowCache.region || region)) / this.shadowSize; // of the map as drawn (none drawn yet: this frame's)
     u.shadowRange.value = this.lightCamera.far - this.lightCamera.near;
     u.shadowStrength.value = sunFactor;
+    u.debugView.value = DEBUG_SHADER_ID[this.debugView];
     u.sunLum.value = lum(this.env.sunColor) * 0.85;
     u.ambLum.value = lum(this.env.skyAmbient) * 0.8 + lum(this.env.groundAmbient) * 0.2;
     u.aoStrength.value = 0.4 + 0.6 * sunFactor; // occlusion stays, but softer, at night
@@ -465,6 +529,47 @@ export class Lighting {
    * and triangles. Each separate render of a multisampled target also resolves it, so the last part, `overhead`, is an empty
    * render: its time is included in every other part.
    */
+  /** The main view into the scene target: normal layers, or one of the triangle debug views. */
+  private drawMain(scene: THREE.Scene, camera: THREE.Camera, world: World): void {
+    if (this.debugView === 'wire') {
+      this.drawWire(scene, camera, world, true);
+      return;
+    }
+    this.drawLayers('scene (HDR)', scene, camera, world, this.sceneTarget);
+    if (this.debugView === 'overlay') this.drawWire(scene, camera, world, false);
+  }
+
+  /** Redraws the culled map meshes as triangle outlines; `fill`: first clears to a dark fill so only visible edges show. */
+  private drawWire(scene: THREE.Scene, camera: THREE.Camera, world: World, fill: boolean): void {
+    const r = this.renderer;
+    // The sky dome, halos and overlay quads aren't part of the map's triangles.
+    const hidden = scene.children.filter((c) => !(c as THREE.Light).isLight && c !== world.group && c.visible);
+    for (const o of hidden) o.visible = false;
+    const background = scene.background;
+    const clearColor = r.getClearColor(new THREE.Color());
+    const clearAlpha = r.getClearAlpha();
+    const autoClear = r.autoClear;
+    scene.background = null;
+    try {
+      r.setRenderTarget(this.sceneTarget);
+      if (fill) {
+        r.setClearColor(0x06080b, 1);
+        r.autoClear = true;
+        scene.overrideMaterial = this.wireFill;
+        r.render(scene, camera);
+      }
+      r.autoClear = false;
+      scene.overrideMaterial = this.wireLine;
+      r.render(scene, camera);
+    } finally {
+      scene.overrideMaterial = null;
+      scene.background = background;
+      r.setClearColor(clearColor, clearAlpha);
+      r.autoClear = autoClear;
+      for (const o of hidden) o.visible = true;
+    }
+  }
+
   private drawLayers(group: string, scene: THREE.Scene, camera: THREE.Camera, world: World, target: THREE.WebGLRenderTarget): void {
     const r = this.renderer;
     r.setRenderTarget(target);
@@ -576,8 +681,7 @@ export class Lighting {
   }
 
   /** Orthographic sun camera covering `region` around the focus, snapped to shadow-map texels so shadows don't shimmer while panning. */
-  private updateLightCamera(focus: THREE.Vector3, region: number): void {
-    const cam = this.lightCamera;
+  private updateLightCamera(cam: THREE.OrthographicCamera, focus: THREE.Vector3, region: number): void {
     const texel = (2 * region) / this.shadowSize;
     // Light-space screen axes; they change with the sun, so rebuild them every frame.
     this.basisCamera.position.copy(this.sunDir);

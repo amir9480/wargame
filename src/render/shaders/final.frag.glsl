@@ -50,10 +50,18 @@ void main() {
   if (fxaaOn > 0.5) col = fxaa(vUv, col);
 
   // Chromatic aberration: red and blue shift apart radially, growing towards the corners (under 1.5 px at the corner).
-  if (chroma > 0.0 && r2 > 0.15) {
-    vec2 off = vc * (r2 - 0.15) * chroma * 2.5 * texel * 2.0;
-    col.r = tap(vUv + off).r;
-    col.b = tap(vUv - off).b;
+  // The shifted taps are anti-aliased like the centre one: without MSAA a thin aliased line (road paint far away) sampled
+  // at a slightly different place per channel turns pink / green.
+  if (chroma > 0.0 && r2 > 0.3) {
+    vec2 off = vc * (r2 - 0.3) * chroma * 2.5 * texel * 2.5;
+    vec2 uvR = vUv + off, uvB = vUv - off;
+    vec3 cr = tap(uvR), cb = tap(uvB);
+    if (fxaaOn > 0.5) {
+      cr = fxaa(uvR, cr);
+      cb = fxaa(uvB, cb);
+    }
+    col.r = cr.r;
+    col.b = cb.b;
   }
 
   // Tilt-shift: out of focus away from the horizontal band through the screen centre.
@@ -73,11 +81,15 @@ void main() {
   if (sharp > 0.0) {
     vec3 n = tap(vUv + vec2(0.0, -1.0) * texel), s = tap(vUv + vec2(0.0, 1.0) * texel);
     vec3 w = tap(vUv + vec2(-1.0, 0.0) * texel), e = tap(vUv + vec2(1.0, 0.0) * texel);
-    vec3 mn = min(min(n, s), min(min(w, e), col));
-    vec3 mx = max(max(n, s), max(max(w, e), col));
-    vec3 amp = sqrt(clamp(min(mn, 1.0 - mx) / max(mx, vec3(1e-3)), 0.0, 1.0));
-    vec3 k = -amp / mix(8.0, 5.0, sharp);
-    col = clamp((col + (n + s + w + e) * k) / (1.0 + 4.0 * k), 0.0, 1.0);
+    // On luma only: sharpening each channel by its own amount shifts the hue along thin bright lines (road paint
+    // against dark asphalt shows coloured fringes once MSAA no longer softens those edges).
+    float lc = luma(col), ln = luma(n), ls = luma(s), lw = luma(w), le = luma(e);
+    float mn = min(min(ln, ls), min(min(lw, le), lc));
+    float mx = max(max(ln, ls), max(max(lw, le), lc));
+    float amp = sqrt(clamp(min(mn, 1.0 - mx) / max(mx, 1e-3), 0.0, 1.0));
+    float k = -amp / mix(8.0, 5.0, sharp);
+    float lSharp = clamp((lc + (ln + ls + lw + le) * k) / (1.0 + 4.0 * k), 0.0, 1.0);
+    col = clamp(col * (lSharp / max(lc, 1e-3)), 0.0, 1.0);
   }
 
   // Vignette + corner darkening, as a multiplier on the linear light (so it is raised to 1/2.2 in the encoded image).

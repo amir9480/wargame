@@ -128,6 +128,10 @@ export class Culler {
   private buckets: Bucket[] = [];
   private frustum = new THREE.Frustum();
   private viewProj = new THREE.Matrix4();
+  /** Objects the last `update` made visible, and a scratch list for the next one; `userData.cullStamp` = call that showed it. */
+  private shown: THREE.Object3D[] = [];
+  private spare: THREE.Object3D[] = [];
+  private stamp = 0;
 
   /** Regroups the items into ground buckets (after the item list changed). */
   private regroup(): void {
@@ -185,6 +189,7 @@ export class Culler {
     box.expandByScalar(margin);
     o.frustumCulled = false;
     o.userData.boundsDirty = false;
+    o.visible = false; // shown by the next `update` if in view (the update hides only what it showed before)
     return { object: o, box, center: box.getCenter(new THREE.Vector3()), data: o.userData };
   }
 
@@ -203,15 +208,21 @@ export class Culler {
     camera.updateMatrixWorld();
     this.viewProj.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
     this.frustum.setFromProjectionMatrix(this.viewProj);
-    // Everything starts hidden (a boolean read per item); only items in a bucket the frustum touches are tested further.
-    for (const it of this.items) if (it.object.visible) it.object.visible = false;
+    // Only items in a bucket the frustum touches are tested; items shown by the previous call that are not shown now
+    // are hidden at the end (no pass over every item). Stamp = this call; items start hidden (`item`).
+    const stamp = ++this.stamp;
+    const shown = this.spare;
+    shown.length = 0;
     const cam = lodCamera.position;
     let drawn = 0;
     for (const bucket of this.buckets) {
       if (!this.frustum.intersectsBox(bucket.box)) continue;
       for (const { object, box, center, data } of bucket.items) {
         if (data.shadowOnly && !shadowPass) continue;
-        const { lodMin, lodMax } = data;
+        // A shadow pass may switch levels at other distances than the view (`shadowLodMin / Max`): e.g. a tree's full mesh
+        // only casts near the camera, a low-poly stand-in takes over sooner than the sprite does in the view.
+        const lodMin = shadowPass ? data.shadowLodMin ?? data.lodMin : data.lodMin;
+        const lodMax = shadowPass ? data.shadowLodMax ?? data.lodMax : data.lodMax;
         if (lodMin !== undefined || lodMax !== undefined) {
           const c = data.lodCenter ?? center;
           const dx = cam.x - c.x, dy = cam.y - c.y, dz = cam.z - c.z;
@@ -220,13 +231,29 @@ export class Culler {
           const blend = shadowPass ? 0 : data.lodBlend ?? 0;
           const lo = (lodMin ?? 0) - blend;
           const hi = (lodMax ?? Infinity) + blend;
-          if ((lo > 0 && d2 < lo * lo) || (hi < Infinity && d2 >= hi * hi)) continue;
+          if (lo > 0 && d2 < lo * lo) continue;
+          if (hi < Infinity) {
+            // `lodMaxCenter`: the far limit is measured from another point (a merged mesh that takes over from several
+            // chunks switches on at one distance, so those chunks must switch off by that same distance).
+            let dMax2 = d2;
+            const cm = data.lodMaxCenter;
+            if (cm) {
+              const mx = cam.x - cm.x, my = cam.y - cm.y, mz = cam.z - cm.z;
+              dMax2 = mx * mx + my * my + mz * mz;
+            }
+            if (dMax2 >= hi * hi) continue;
+          }
         }
         if (!this.frustum.intersectsBox(box)) continue;
         object.visible = true;
+        data.cullStamp = stamp;
+        shown.push(object);
         drawn++;
       }
     }
+    for (const object of this.shown) if (object.userData.cullStamp !== stamp) object.visible = false;
+    this.spare = this.shown;
+    this.shown = shown;
     return { drawn, total: this.items.length };
   }
 }

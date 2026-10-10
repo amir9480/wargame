@@ -8,6 +8,7 @@ varying float vMix;
 varying vec3 vWorldPos;
 varying float vLodDist;
 varying vec3 vTint;
+varying vec3 vQuad;
 
 #ifdef SPRITE_ATTR
 // Several models in one mesh (rocks): per instance (atlas row, quad size, quad centre height).
@@ -55,6 +56,7 @@ void main() {
   vUv1 = vec2((c0 + 1.0 + uv.x) / pitchCols, vUv0.y);
 
   vWorldPos = wp;
+  vQuad = vec3((uv - 0.5) * 2.0, quadSize * sx * 0.5);
   vTint = vec3(1.0);
 #ifdef USE_INSTANCING_COLOR
   vTint = instanceColor;

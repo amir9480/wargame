@@ -14,9 +14,13 @@ flat varying vec4 vCols;
 flat varying vec4 vDoor;
 flat varying vec3 vGlass;
 
-// Camera distances (m) over which the far windows shrink to ~40% of their area (more wall between them) and dim.
-#define FAR_SHRINK_START 90.0
-#define FAR_SHRINK_END 420.0
+// The far windows start at exactly the near level's size and shrink (more wall between them) and dim over FAR_SHRINK_SPAN
+// metres beyond `farShrinkStart` (= the near / far switch distance of the quality preset + half a chunk, see
+// BuildingLayer.setLodDistance), so there is no visible size jump at the switch at any graphics quality.
+uniform float farShrinkStart;
+#define FAR_SHRINK_SPAN 330.0
+// Inset per side at full shrink, as a share of the pane's smaller dimension: 0.18 keeps 64% of it (0.3 left tiny specks).
+#define FAR_SHRINK_INSET 0.18
 // The halo spilling over the wall fades out sooner than the shrink: it would fill the gaps between neighbouring panes.
 #define FAR_HALO_START 40.0
 #define FAR_HALO_END 160.0
@@ -44,9 +48,9 @@ void main() {
     float floorI = floor(vFacade.y / fh);
     float fy = vFacade.y - floorI * fh;
     // From afar the windows shrink (more wall between them), or the lit panes of a big block merge into one bright slab.
-    float farK = smoothstep(FAR_SHRINK_START, FAR_SHRINK_END, distance(cameraPosition, vWorldPos));
+    float farK = smoothstep(farShrinkStart, farShrinkStart + FAR_SHRINK_SPAN, distance(cameraPosition, vWorldPos));
     float haloK = smoothstep(FAR_HALO_START, FAR_HALO_END, distance(cameraPosition, vWorldPos));
-    float inset = farK * 0.3 * min(vGrid.z, vGrid.y);
+    float inset = farK * FAR_SHRINK_INSET * min(vGrid.z, vGrid.y);
     vec2 d = vec2(max(abs(vFacade.x - centre) - vGrid.z * 0.5 + inset, 0.0), max(max(vGrid.x + inset - fy, fy - vGrid.x - vGrid.y + inset), 0.0));
     float dist = length(d);
     float exists = step(0.0, vFacade.y) * step(floorI, vCols.w - 1.0);

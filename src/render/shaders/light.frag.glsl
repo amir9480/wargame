@@ -3,7 +3,7 @@
 // accumulated light with the surface colour (see post.frag.glsl).
 uniform sampler2D tDepth;
 uniform mat4 invViewProj;
-uniform vec2 resolution;
+uniform vec2 lightResolution; // size of the light buffer (a share of the screen, see QualitySettings.lightResolution)
 
 varying vec3 vCenter;
 varying float vRadius;
@@ -18,7 +18,7 @@ vec3 worldAt(vec2 uv, float d) {
 }
 
 void main() {
-  vec2 uv = gl_FragCoord.xy / resolution;
+  vec2 uv = gl_FragCoord.xy / lightResolution;
   float d0 = texture2D(tDepth, uv).r;
   if (d0 >= 1.0) discard;
   vec3 P = worldAt(uv, d0);
@@ -35,7 +35,7 @@ void main() {
   }
 
   // Normal from depth, using the neighbour with the smaller depth step so silhouettes don't smear.
-  vec2 px = 1.0 / resolution;
+  vec2 px = 1.0 / lightResolution;
   float dR = texture2D(tDepth, uv + vec2(px.x, 0.0)).r;
   float dL = texture2D(tDepth, uv - vec2(px.x, 0.0)).r;
   float dU = texture2D(tDepth, uv + vec2(0.0, px.y)).r;

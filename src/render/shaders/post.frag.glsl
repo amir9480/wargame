@@ -13,6 +13,7 @@ uniform sampler2D tRay;       // light rays (half resolution, linear filtered): 
 uniform float rayOn;
 uniform sampler2D tLight;     // irradiance of the local lights, accumulated by their volumes
 uniform float lightOn;       // 0 = light buffer empty this frame
+uniform vec2 lightSize;      // light buffer size (a share of the screen, QualitySettings.lightResolution)
 uniform mat4 invViewProj;
 uniform mat4 viewProj;
 uniform mat4 shadowVP;
@@ -41,6 +42,9 @@ uniform sampler2D tBloom;    // half-res HDR bloom (postfx.ts), linear filtered
 uniform float bloomStrength; // 0 = off
 uniform sampler2D tGod;      // half-res sun god rays (postfx.ts)
 uniform float godOn;
+// Debug views (debugView.ts DEBUG_SHADER_ID): 0 normal, 1 shadows, 2 AO, 3 local lights, 4 depth, 5 normals (each one shows
+// its term alone), 6 triangles only (scene colour as drawn, no lighting extras), 7 triangles overlay (normal image).
+uniform int debugView;
 varying vec2 vUv;
 
 #include ./chunks/fog.glsl; // fogFade (fogNear / fogFar are copied from the light field every frame) + the aerial LUT
@@ -64,13 +68,35 @@ float linearDepth(float d) {
   return 2.0 * camNear * camFar / (camFar + camNear - z * (camFar - camNear));
 }
 
+// The light buffer is drawn at a lower resolution: upsample it with bilinear weights cut where a texel's depth (taken
+// where light.frag took it, at the texel centre) lies on another surface, so light doesn't bleed across silhouettes.
+vec3 lightAt(float z0) {
+  vec2 pos = vUv * lightSize - 0.5;
+  vec2 base = floor(pos), f = pos - base;
+  vec3 sum = vec3(0.0);
+  float wsum = 0.0;
+  for (int i = 0; i < 4; i++) {
+    vec2 o = vec2(float(i - (i / 2) * 2), float(i / 2));
+    vec2 uv = (base + o + 0.5) / lightSize;
+    float z = linearDepth(texture2D(tDepth, uv).r);
+    vec2 b = mix(1.0 - f, f, o);
+    float w = b.x * b.y * max(1e-3, 1.0 - abs(z - z0) / (0.03 * z0)) + 1e-5;
+    sum += texture2D(tLight, uv).rgb * w;
+    wsum += w;
+  }
+  return sum / wsum;
+}
+
 void main() {
   vec4 src = texture2D(tColor, vUv);
   vec3 col = src.rgb;
+  bool showTerm = debugView >= 1 && debugView <= 5;
+  vec3 term = vec3(0.03); // the debug term shown for this pixel (sky and anything the term doesn't reach stay dark)
   float d0 = texture2D(tDepth, vUv).r;
+  if (debugView == 4 && d0 < 1.0) term = vec3(exp(-linearDepth(d0) / 400.0));
 
-  // src.a < 0.5 marks far-LOD sprite pixels (see billboard.frag.glsl): left untouched.
-  if (d0 < 1.0 && src.a > 0.5) {
+  // src.a < 0.5 marks far-LOD sprite pixels (see billboard.frag.glsl): left untouched. (Triangles-only view: no extras.)
+  if (d0 < 1.0 && src.a > 0.5 && debugView != 6) {
     vec3 P = worldAt(vUv, d0);
     float region = 1.0 - smoothstep(0.75 * regionR, regionR, distance(P.xz, focus.xz));
     // Pixels that melted into the map-edge haze (fogdist.glsl) keep no shadows / occlusion: they are haze colour already.
@@ -84,10 +110,13 @@ void main() {
       float mist = (1.0 - exp(-dist * MIST_PER_M)) * exp(-max(P.y - MIST_BASE, 0.0) / MIST_HEIGHT) * MIST_MAX;
       region *= ap.a * (1.0 - mist * smoothstep(0.02, 0.15, 1.0 - ap.a));
     }
-    vec3 irradiance = lightOn > 0.5 ? texture2D(tLight, vUv).rgb : vec3(0.0);
+    vec3 irradiance = lightOn > 0.5 ? lightAt(linearDepth(d0)) : vec3(0.0);
     bool lit = dot(irradiance, irradiance) > 1e-6;
+    // Debug terms where the effects don't reach: no shadow, no occlusion; local lights everywhere.
+    if (debugView == 1 || debugView == 2) term = vec3(1.0);
+    else if (debugView == 3) term = min(irradiance * 0.5, vec3(1.0));
 
-    if (region > 0.001 || lit) {
+    if (region > 0.001 || lit || debugView == 5) {
       // Normal from depth: use the neighbour with the smaller depth step so silhouettes don't smear.
       vec2 px = 1.0 / resolution;
       float dR = texture2D(tDepth, vUv + vec2(px.x, 0.0)).r;
@@ -204,6 +233,9 @@ void main() {
       }
 
       float sh = 1.0 - (1.0 - shadow) * (1.0 - contact * 0.8);
+      if (debugView == 1) term = vec3(1.0 - sh * region);
+      else if (debugView == 2) term = vec3(mix(1.0, ao, region));
+      else if (debugView == 5) term = NS * 0.5 + 0.5;
       col *= 1.0 - sh * sunShare * shadowStrength * region;
       col *= mix(1.0, ao, region * (0.35 + 0.65 * (1.0 - sunShare)));
 
@@ -216,11 +248,14 @@ void main() {
     }
   }
 
-  if (rayOn > 0.5) col += texture2D(tRay, vUv).rgb;
-  if (bloomStrength > 0.0) col += texture2D(tBloom, vUv).rgb * bloomStrength;
-  if (godOn > 0.5) col += texture2D(tGod, vUv).rgb;
+  if (debugView != 6) {
+    if (rayOn > 0.5) col += texture2D(tRay, vUv).rgb;
+    if (bloomStrength > 0.0) col += texture2D(tBloom, vUv).rgb * bloomStrength;
+    if (godOn > 0.5) col += texture2D(tGod, vUv).rgb;
+  }
 
   col = colorGrade(col); // display-encoded from here on: the final pass (final.frag.glsl) reads it
+  if (showTerm) col = term; // debug views: the term itself, already display values
 
   gl_FragColor = vec4(col, 1.0);
 }

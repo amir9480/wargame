@@ -6,7 +6,7 @@ import type { Environment } from './world.ts';
 import { groupByChunk, type ChunkGrid } from './culling.ts';
 import treeVertex from './shaders/tree.vert.glsl';
 import treeFragment from './shaders/tree.frag.glsl';
-import { SHADOW_ONLY_MATERIAL, SPRITE_LOD_BLEND, applySprite, bakeAtlas, bakeMaterial, createSpriteLod, createSpriteMaterial, shadowProxy, spriteQuad, type SpriteAtlas, type SpriteLod } from './billboard.ts';
+import { SHADOW_ONLY_MATERIAL, SPRITE_LOD_BLEND, SPRITE_PITCH_COUNT, applySprite, bakeAtlas, bakeMaterial, createSpriteLod, createSpriteMaterial, shadowProxy, spriteQuad, type SpriteAtlas, type SpriteLod } from './billboard.ts';
 
 /** Fixed seed for the tree meshes: shapes are shared by every map. */
 const SHAPE_SEED = 4241;
@@ -23,6 +23,8 @@ interface Placed {
 
 /** Resolution of the baked billboard texture. */
 const BILLBOARD_RES = 256;
+/** Beyond this camera distance (m) trees cast shadows through their low-poly stand-in instead of the full mesh (a shadow pass drew 500k tree triangles). */
+const SHADOW_MESH_DISTANCE = 90;
 
 /**
  * All trees of a map as one InstancedMesh: a single merged mesh (trunk + foliage,
@@ -78,11 +80,11 @@ export class TreeLayer {
   }
 
   /** Renders the species at every sprite pitch into the atlas (reusing its texture when there is one). */
-  private bake(type: TreeType): SpriteAtlas {
+  private bake(type: TreeType, colFrom = 0, colTo = SPRITE_PITCH_COUNT): SpriteAtlas {
     const material = bakeMaterial(this.material);
     material.uniforms.time.value = 0;
     material.uniforms.treeHeight.value = TREE_HEIGHT[type];
-    const atlas = bakeAtlas(this.renderer, [{ geometry: this.shapes[type], material, originY: 0 }], BILLBOARD_RES, this.atlas ?? undefined);
+    const atlas = bakeAtlas(this.renderer, [{ geometry: this.shapes[type], material, originY: 0 }], BILLBOARD_RES, this.atlas ?? undefined, colFrom, colTo);
     material.dispose();
     return (this.atlas = atlas);
   }
@@ -91,6 +93,11 @@ export class TreeLayer {
   rebake(): void {
     if (!this.type || !this.atlas) return;
     applySprite(this.billboardMaterial, this.bake(this.type), 0);
+  }
+
+  /** Re-bakes one pitch column of the atlas (the same texture, so nothing else to update); a full re-bake spread over frames. */
+  rebakeColumn(col: number): void {
+    if (this.type && this.atlas) this.bake(this.type, col, col + 1);
   }
 
   /** Starts a new map: removes the old trees; `add` then brings in the new ones band by band. */
@@ -153,6 +160,7 @@ export class TreeLayer {
       });
       mesh.userData.lodMax = this.lodDistance;
       mesh.userData.lodNear = true;
+      mesh.userData.shadowLodMax = Math.min(SHADOW_MESH_DISTANCE, this.lodDistance);
       mesh.userData.lodBlend = SPRITE_LOD_BLEND;
       mesh.userData.lodCenter = lodCenter;
 
@@ -171,6 +179,7 @@ export class TreeLayer {
       const caster = new THREE.InstancedMesh(this.proxies[this.type!], SHADOW_ONLY_MATERIAL, chunk.length);
       chunk.forEach((t, i) => caster.setMatrixAt(i, t.matrix));
       caster.userData.lodMin = this.lodDistance;
+      caster.userData.shadowLodMin = Math.min(SHADOW_MESH_DISTANCE, this.lodDistance);
       caster.userData.shadowOnly = true;
       caster.userData.lodCenter = lodCenter;
       this.limitFar(caster);
@@ -189,9 +198,12 @@ export class TreeLayer {
     this.farDistance = farDistance;
     this.lod.lodSwitch.value = distance;
     for (const child of this.group.children) {
-      if (child.userData.lodNear) child.userData.lodMax = distance; // full mesh
-      else {
+      if (child.userData.lodNear) {
+        child.userData.lodMax = distance; // full mesh
+        child.userData.shadowLodMax = Math.min(SHADOW_MESH_DISTANCE, distance);
+      } else {
         child.userData.lodMin = distance; // sprite / shadow stand-in
+        if (child.userData.shadowOnly) child.userData.shadowLodMin = Math.min(SHADOW_MESH_DISTANCE, distance);
         this.limitFar(child);
       }
     }

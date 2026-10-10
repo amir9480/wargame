@@ -518,6 +518,7 @@ export class LightField {
     haloBokeh: { value: 0 },
     tNoise: { value: null as THREE.Texture | null },
     rayResolution: { value: new THREE.Vector2(1, 1) },
+    lightResolution: { value: new THREE.Vector2(1, 1) },
   };
   /** Unit sphere every group clones for its chunk meshes. */
   readonly volume = new THREE.IcosahedronGeometry(1, 1);

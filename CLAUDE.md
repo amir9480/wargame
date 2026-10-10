@@ -243,10 +243,18 @@ bases, cities, roads, buildings, parking, rocks, dirt, mountain, trees, landRati
   per-render world-matrix pass over thousands of meshes was ~1 ms of CPU), so only the two scene lights are updated by hand
   (`Engine.timeOfDay`); anything else that moves needs `updateMatrixWorld()` after each change. The `Culler` buckets items by 64 m ground
   cell and tests a bucket's box once before its items (same result as testing every item).
-- **LOD**: `Culler` also honours `userData.lodMin/lodMax/lodCenter` (camera distance to the chunk centre). Terrain chunks
-  have 3 detail levels (stride 1/2/4, `TERRAIN_LODS` in `world.ts`); each chunk border has a skirt (duplicated vertices
+- **LOD**: `Culler` also honours `userData.lodMin/lodMax/lodCenter` (camera distance to the chunk centre); `lodMaxCenter` measures
+  the far limit from another point, and a shadow pass uses `shadowLodMin/shadowLodMax` when set (trees: full mesh casts only within
+  90 m, `SHADOW_MESH_DISTANCE`, the low-poly stand-in beyond). The `Culler` hides only what its previous `update` showed (no pass over
+  every item; newly registered items start hidden). Terrain chunks have 2 detail levels (stride 1/2, `TERRAIN_LODS` in `ground.ts`);
+  beyond 520 m 4×4 chunks are drawn as one **super chunk** mesh (stride 4, then 8 beyond 1000 m, `SUPER_LODS`; distances × the
+  quality's `terrainLodScale`), measured from the super chunk's centre, and the chunks' last level switches off by that same distance
+  (`lodMaxCenter`). A super chunk exists once all its chunks are built; chunk rewrites mark it dirty and `World.syncScene` refills it once
+  (`flushSupers`). Each chunk border has a skirt (duplicated vertices
   pushed down by the `drop` attribute) that hides cracks between levels. Far trees/rocks draw as camera-facing sprites
-  (`billboard.ts`): one offscreen bake per species/rock shape at the current camera pitch, re-baked when pitch drifts.
+  (`billboard.ts`): one offscreen bake per species/rock shape and pitch column (7 columns), mip chain built once per bake. Sprites
+  shade themselves where the post pass can't (`Environment.spriteShade`, filled by `Lighting` each frame): a sun shadow-map lookup at
+  a point on the object's surface and a per-object occlusion term.
 - **Shader detail LOD** (`shaders/chunks/lod.glsl`): `surfaceDetail(p)` = 1 near → 0 between `DETAIL_START` / `DETAIL_END`
   (default 110 / 170 m; a shader may `#define` its own range before the include). Beyond it the fine pattern isn't
   computed, its average colour is drawn: rail (ballast texture, sleepers, rails → mean ballast / 38% timber / 6% steel;
@@ -256,7 +264,8 @@ bases, cities, roads, buildings, parking, rocks, dirt, mountain, trees, landRati
   second ripple layer dropped); rocks sample moss / snow only where they show. Road paint has
   its own fade (`MARK_FADE_*`). Far averages are calibrated from the textures' linear means (dirt ≈ 0.06).
 - The renderer draws the whole `Terrain` grid (play area + margin) the same way; only the camera is bounded to the play area.
-- **Lighting** (`lighting.ts`, `shaders/post.*`): scene renders into an MSAA half-float target with a depth texture; one
+- **Lighting** (`lighting.ts`, `shaders/post.*`): scene renders into a half-float target with a depth texture (no MSAA on any preset;
+  FXAA in the final pass); one
   full-screen pass rebuilds world pos from depth and applies a 2048² sun shadow map (ortho, texel-snapped, casters culled by
   the sun frustum but at the **main camera's LOD levels** (`World.cullShadow(lightCamera, camera)`): each object casts with
   the mesh the view draws, off-screen casters still cast; sprites/water/decals flagged `userData.noShadow`; far trees /
@@ -265,12 +274,16 @@ bases, cities, roads, buildings, parking, rocks, dirt, mountain, trees, landRati
   then does the sRGB output. Shadow share = sun/(ambient+sun) from depth-derived normals, so material shaders are unchanged.
   Depth normals for shading are taken over >= one terrain cell (2 m, central differences, one-sided at depth jumps), so
   the faceted terrain doesn't show its triangles in shadow / AO.
+  **Shadow map cache** (`Lighting.shadowCache`): the map is redrawn only when the sun moved > `SHADOW_SUN_STEP` (~0.25°), the
+  texel-snapped light view or the region changed (region in 4 m steps), the culling camera moved > `SHADOW_CAMERA_STEP` (6 m: casters'
+  LOD levels), or `World.shadowEpoch` changed (scene sync, building destroy / repair); quality changes invalidate it. Anything new that
+  changes what casts (moving casters, LOD switches not tied to the camera) must bump the epoch.
 - **SSAO** (`shaders/ao.frag.glsl`, `Lighting.renderAO`): half resolution, 3 small passes before the post pass: depth ->
   linear view depth (R32F), occlusion (`aoSamples` taps, compile-time `AO_TAPS`, view-space reconstruction without
   matrices, 4x4 interleaved rotation, crease bias 0.18), 4x4 depth-aware blur (cancels the interleave). The post pass
   upsamples it with depth-aware bilinear weights. Skipped outside the effect region.
   Effects fade out beyond a region around the camera focus (radius = 0.45 x zoom, 130-200, fading from 75% of the radius). Panel quality select controls it (see Graphics quality).
-  Pixel ratio is capped per preset (high 1.25, 2 MSAA samples). Contact shadows are marched only where the shadow map left the pixel
+  Pixel ratio is capped per preset (high 1.25, ultra 1.5). Contact shadows are marched only where the shadow map left the pixel
   lit and within 140 m of the camera (faded from 60 m).
 - **Soft shadows**: no per-pixel trig / multi-tap kernel. `textures/shadow_noise.png` (64x64, void-and-cluster blue noise made by
   `generate-textures.ts`: rg = cos/sin of a per-texel angle, b = noise value) is fetched once per pixel; the shadow map is then read at 2
@@ -280,7 +293,10 @@ bases, cities, roads, buildings, parking, rocks, dirt, mountain, trees, landRati
   mutates the shared `Environment` in place (sun dir/colour, sky + ground ambient, fog/background, `daylight`), so all
   shaders follow. Sun rises east at 6, sets west at 18, stays north of overhead (shadows fall towards the default camera).
   Sun below the horizon => shadow map and contact shadows are skipped (AO stays, softer). Far-LOD sprites carry baked
-  shading, so `World.refreshSprites()` re-bakes them on every change.
+  shading, so `World.refreshSprites()` re-bakes them once the sun moved ~0.6° or daylight changed by 0.02: one pitch column per
+  frame (`World.update`); a change during a sweep queues one more sweep instead of restarting it. The sky / aerial LUTs re-bake
+  only once the sun or moon moved ~0.3°, and the colour-grade LUT (`gradeLut.ts`) builds a new table a few slices per frame and
+  swaps it in when complete.
 - **Street lights** (`terrain/streetlights.ts` `planStreetLights`: pure placement, no RNG; `render/streetlights.ts`): asphalt = tall steel
   poles every 24 m on alternating sides (spot light, warm white), dirt = wooden post with hanging lantern every 40 m (point light).
   Skipped on bridges, near nodes, on banks, near other roads/trees/rocks. One seeded colour per street (`streetIds`: edges
@@ -290,8 +306,10 @@ bases, cities, roads, buildings, parking, rocks, dirt, mountain, trees, landRati
   switched on by daylight (`update(daylight)`: lamp emissive + light dimmer).
 - **Deferred local lights** (`lights.ts`, `shaders/light.*`): `LightField` (owned by `World.lights`) holds `LightGroup`s of point/spot
   `LightDef`s. A group is one InstancedMesh of light-volume spheres per chunk (frustum + distance culled by its own `Culler`, `level` dimmer;
-  group level 0 = skipped). `Lighting` draws the culled volumes additively (back faces, no depth test) into a half-float light buffer; each
-  pixel rebuilds position/normal from the scene depth and writes irradiance. The post pass multiplies it with the surface colour
+  group level 0 = skipped). `Lighting` draws the culled volumes additively (back faces, no depth test) into a half-float light buffer (a share of the
+  screen per axis, `QualitySettings.lightResolution`: 0.5; the ray / reflection target uses the same size); each pixel rebuilds
+  position/normal from the scene depth and writes irradiance. The post pass upsamples it with depth-aware bilinear weights (like the
+  AO, so light doesn't bleed across silhouettes) and multiplies it with the surface colour
   (albedo ≈ scene colour / (ambient + sun·n·l)) after sun shadows. No shadows from local lights; needs a quality with the post pass (low draws overlay quads instead).
   New light sources: `field.createGroup()` then `group.build(defs, chunkGrid)`.
   **Light halos** (`lighthalo.vert/frag.glsl`, built with the group in `LightGroup.buildFake`, drawn in the main scene at every quality via
@@ -314,7 +332,7 @@ bases, cities, roads, buildings, parking, rocks, dirt, mountain, trees, landRati
   resolution straight to the screen (no post pass: no shadows / AO, no MSAA) and replaces deferred street lights by additive overlay quads
   (a camera-facing glow + a pool per light draped over the terrain in the vertex shader from the height texture, `lights.ts` `LightGroup.buildFake`, same culling/instancing). New cost-vs-looks
   High / ultra also draw **light rays** (`lightShafts`, post effect: `ray.*.glsl`): per spot light an instanced bounding sphere (own scene
-  `LightField.shaftScene`, chunk-culled by `cullShafts`) is drawn into a half-resolution target; each pixel marches the camera ray (6 steps,
+  `LightField.shaftScene`, chunk-culled by `cullShafts`) is drawn into a `lightResolution` target; each pixel marches the camera ray (6 steps,
   stopped by the scene depth) through the lamp's cone: a plain translucent cone, opacity linear from lamp (top) to ground (bottom), soft
   at the edge and near the camera (~16 m). The post pass adds the target as is, so roads / trees can't cover it.
   New cost-vs-looks knobs belong in `QualitySettings`. Seed, time of day and quality persist in `localStorage` (`wargame.settings`, guarded) via `main.ts`.
@@ -375,7 +393,9 @@ bases, cities, roads, buildings, parking, rocks, dirt, mountain, trees, landRati
 
 ## UI
 
-`index.html` + `src/main.ts` (Alpine `mapPanel`): seed input, Generate, random seed (both disabled while a map loads),
+`index.html` + `src/main.ts` (Alpine `mapPanel`): **Debug view** select (`render/debugView.ts`, `engine.debugView`, not persisted: final,
+triangles overlay / only (`Lighting.drawWire`: culled meshes redrawn with a line override material), and post-pass terms alone: shadows,
+AO, local lights, depth, normals; the post views are disabled on low), seed input, Generate, random seed (both disabled while a map loads),
 load progress bar (`engine.onProgress`), info rows
 (sea sides, mountain edges, rivers, bases, roads, junctions, bridges, towns, buildings, trees, dirt, rocks, land, gen time,
 FPS, drawn chunk meshes), plus destruction test buttons (destroy a random 10% / repair all, via `engine.buildingState`). Default seed 42.

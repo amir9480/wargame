@@ -20,6 +20,8 @@ import haloVertex from '../shaders/buildingHalo.vert.glsl';
 import haloFragment from '../shaders/lighthalo.frag.glsl';
 
 /** Window lights switch on as the sky darkens (same curve as the street lights). */
+/** Half the diagonal of a map chunk (m): the near / far switch is decided by chunk centre, so a far pixel can be this much nearer than the switch distance. */
+const CHUNK_HALF_DIAGONAL = 46;
 const ON_DAYLIGHT = 0.65;
 const OFF_DAYLIGHT = 0.25;
 /** Window halo colour (linear) and disc size (m). */
@@ -84,6 +86,8 @@ export class BuildingLayer {
   /** Chunks nearer than this to the camera draw the detailed meshes. */
   private lodDistance = 300;
   private unsubscribe: (() => void) | null = null;
+  /** Counts destroy / repair changes (cached shadow maps are redrawn when it moves). */
+  changes = 0;
   /** Destroyed bits of the current map's buildings (null before its buildings arrive). */
   state: BuildingState | null = null;
 
@@ -106,7 +110,7 @@ export class BuildingLayer {
       time: field.uniforms.time,
     });
     this.nearMaterial = new THREE.ShaderMaterial({ vertexShader: nearVertex, fragmentShader: nearFragment, vertexColors: true, uniforms: uniforms() });
-    this.farMaterial = new THREE.ShaderMaterial({ vertexShader: farVertex, fragmentShader: farFragment, vertexColors: true, uniforms: uniforms() });
+    this.farMaterial = new THREE.ShaderMaterial({ vertexShader: farVertex, fragmentShader: farFragment, vertexColors: true, uniforms: { ...uniforms(), farShrinkStart: { value: this.lodDistance + CHUNK_HALF_DIAGONAL } } });
     this.haloMaterial = new THREE.ShaderMaterial({
       vertexShader: haloVertex,
       fragmentShader: haloFragment,
@@ -288,6 +292,7 @@ export class BuildingLayer {
 
   /** Shows building `id` standing or as rubble. */
   private apply(id: number, destroyed: boolean): void {
+    this.changes++;
     const chunk = this.chunkOf.get(id);
     const s = chunk?.spans.get(id);
     if (!chunk || !s) return;
@@ -304,6 +309,7 @@ export class BuildingLayer {
   /** Moves the detail switch distance of every chunk, built or future. */
   setLodDistance(distance: number): void {
     this.lodDistance = distance;
+    this.farMaterial.uniforms.farShrinkStart.value = distance + CHUNK_HALF_DIAGONAL;
     for (const c of this.chunks.values()) {
       c.near.userData.lodMax = distance;
       c.far.userData.lodMin = distance;

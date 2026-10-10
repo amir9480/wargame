@@ -22,6 +22,35 @@ export const SPRITE_LOD_BIAS = 10;
  */
 export const SPRITE_LOD_BLEND = SPRITE_LOD_BIAS + 48;
 
+/**
+ * What sprites need to be shaded like the real meshes: the sun shadow map (sprites are flat quads, so the post pass can't
+ * shadow them; they look the map up themselves, at a point on the object's surface) and a per-object occlusion strength.
+ * Shared objects, filled by `Lighting` every frame before the scene is drawn.
+ */
+export interface SpriteShadeUniforms {
+  tShadow: THREE.IUniform<THREE.Texture | null>;
+  shadowVP: THREE.IUniform<THREE.Matrix4>;
+  focus: THREE.IUniform<THREE.Vector3>;
+  regionR: THREE.IUniform<number>;
+  shadowRange: THREE.IUniform<number>;
+  /** Share of a sprite's light that the sun gives (shadowed away where the map says so); 0 = no shadow map this frame. */
+  spriteShadow: THREE.IUniform<number>;
+  /** Strength of the per-object ambient occlusion term (0 = none). */
+  spriteAO: THREE.IUniform<number>;
+}
+
+export function createSpriteShade(): SpriteShadeUniforms {
+  return {
+    tShadow: { value: null },
+    shadowVP: { value: new THREE.Matrix4() },
+    focus: { value: new THREE.Vector3() },
+    regionR: { value: 150 },
+    shadowRange: { value: 500 },
+    spriteShadow: { value: 0 },
+    spriteAO: { value: 0.7 },
+  };
+}
+
 /** Switch distance, bias and the blue noise of the dithered cross-fade, shared by a layer's near mesh and sprite materials (shader uniform objects). */
 export function createSpriteLod(distance: number, noise: THREE.Texture) {
   return { lodSwitch: { value: distance }, lodBias: { value: SPRITE_LOD_BIAS }, tNoise: { value: noise } };
@@ -77,6 +106,8 @@ export function createSpriteMaterial(env: Environment, lod: SpriteLod, perInstan
       fogNear: { value: 400 },
       fogFar: { value: 1200 },
       ...lod,
+      ...env.spriteShade,
+      sunDir: { value: env.sunDir },
     },
   });
 }
@@ -144,7 +175,7 @@ export interface BakeEntry {
  * row = entry, column = pitch. Drawing from the live camera needs no re-bake, only a lighting change does; pass the
  * previous atlas to draw into its texture again.
  */
-export function bakeAtlas(renderer: THREE.WebGLRenderer, entries: BakeEntry[], resolution: number, previous?: SpriteAtlas): SpriteAtlas {
+export function bakeAtlas(renderer: THREE.WebGLRenderer, entries: BakeEntry[], resolution: number, previous?: SpriteAtlas, colFrom = 0, colTo = SPRITE_PITCH_COUNT): SpriteAtlas {
   const cols = SPRITE_PITCH_COUNT;
   const width = cols * resolution, height = entries.length * resolution;
   let target = previous?.target;
@@ -164,6 +195,8 @@ export function bakeAtlas(renderer: THREE.WebGLRenderer, entries: BakeEntry[], r
   const prevAlpha = renderer.getClearAlpha();
   renderer.setClearColor(0x59603f, 0); // transparent but object-ish coloured: mip filtering leaves no dark fringes
   target.scissorTest = true; // one cell at a time
+  renderer.setRenderTarget(target); // allocates the texture with its mip levels (while generateMipmaps is still on)
+  target.texture.generateMipmaps = false; // see the end of this function
 
   const rows = entries.map((entry, row) => {
     const { geometry, material, originY } = entry;
@@ -186,7 +219,7 @@ export function bakeAtlas(renderer: THREE.WebGLRenderer, entries: BakeEntry[], r
 
     const center = new THREE.Vector3(0, originY + centerY, 0);
     const camera = new THREE.OrthographicCamera(-size / 2, size / 2, size / 2, -size / 2, 0.1, 400);
-    for (let col = 0; col < cols; col++) {
+    for (let col = colFrom; col < colTo; col++) {
       const pitch = SPRITE_PITCH_MIN + col * SPRITE_PITCH_STEP;
       camera.position.set(0, center.y + Math.sin(pitch) * 200, Math.cos(pitch) * 200);
       camera.lookAt(center);
@@ -199,7 +232,14 @@ export function bakeAtlas(renderer: THREE.WebGLRenderer, entries: BakeEntry[], r
     return { size, centerY };
   });
 
+  // Mip chain once for the whole atlas: three would regenerate it after every cell's render (rows x columns times).
   target.scissorTest = false;
+  target.texture.generateMipmaps = true;
+  const autoClear = renderer.autoClear;
+  renderer.autoClear = false;
+  renderer.setRenderTarget(target);
+  renderer.render(new THREE.Scene(), new THREE.Camera()); // draws nothing; the mipmap update runs at the end of every render
+  renderer.autoClear = autoClear;
   renderer.setRenderTarget(prevTarget);
   renderer.setClearColor(prevColor, prevAlpha);
   return { target, rows };

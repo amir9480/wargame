@@ -8,6 +8,8 @@ import { applyTimeOfDay, DEFAULT_HOUR, goldenHour } from './render/timeOfDay.ts'
 import { Atmosphere } from './render/atmosphere.ts';
 import { Sky, SKY_LAYER } from './render/sky.ts';
 import { DEFAULT_QUALITY, QUALITY_SETTINGS, type Quality } from './render/quality.ts';
+import type { DebugView } from './render/debugView.ts';
+import { createSpriteShade } from './render/billboard.ts';
 import { profiler } from './core/profiler.ts';
 import { GpuTimer } from './render/gpuTimer.ts';
 import { DynamicResolution } from './render/dynamicResolution.ts';
@@ -18,6 +20,10 @@ export const MAP_CELL = 2;
 const TEXTURE_BASE = `${import.meta.env.BASE_URL}assets/textures/`;
 /** Main-thread time per frame spent building map meshes while a map streams in (ms). */
 const BUILD_BUDGET_MS = 6;
+/** Sun movement (radians, ~0.6 deg) that makes the far-LOD sprites bake their shading again. */
+const SPRITE_REBAKE_STEP = 0.01;
+/** Sun / moon movement (radians, ~0.3 deg) that makes the sky and aerial-perspective LUTs bake again. */
+const ATMOSPHERE_REBAKE_STEP = 0.005;
 
 /** Plain summary returned to the UI (no heavy arrays -> safe for Alpine reactivity). */
 export interface MapInfo {
@@ -101,6 +107,15 @@ export class Engine {
   private pendingView: CameraView | null = null;
   private generator = new TerrainGenerator();
   private lastFrameAt = 0;
+  /** Sun direction and daylight of the last sprite re-bake request (see `timeOfDay`). */
+  private spriteSun = new THREE.Vector3(0, -1, 0);
+  private spriteDaylight = -1;
+  /** Sun / moon of the last atmosphere LUT bake (see `timeOfDay`). */
+  private bakedSun = new THREE.Vector3(0, -1, 0);
+  private bakedMoon = new THREE.Vector3(0, -1, 0);
+  private bakedMoonLit = -1;
+  /** Dynamic resolution scale to apply at the start of the next frame (see `frameLoop`). */
+  private pendingScale: number | null = null;
   /** A map has been started (the camera has been placed). */
   private hasMap = false;
   /** Lowers the render resolution while the GPU can't hold the frame rate (high / ultra, see QualitySettings.dynamicResolution). */
@@ -138,6 +153,7 @@ export class Engine {
       moonLit: { value: 1 },
       starRotation: new THREE.Matrix3(),
       fog: this.atmosphere.fog,
+      spriteShade: createSpriteShade(),
       daylight: { value: 1 },
       hour: { value: DEFAULT_HOUR },
     };
@@ -213,12 +229,27 @@ export class Engine {
   set timeOfDay(hour: number) {
     this.hour = hour;
     const { daylight } = profiler.scope('time of day', 'apply', () => applyTimeOfDay(hour, this.env));
-    profiler.scope('time of day', 'atmosphere bake (sky + aerial LUTs)', () => this.atmosphere.bake(this.env.sunDir, this.env.moonDir, this.env.moonLit.value, goldenHour(this.env.sunDir.y)));
+    // The sky / aerial LUTs (65 draw calls) are rebaked only once the sun or moon moved visibly since the last bake.
+    const { sunDir, moonDir, moonLit } = this.env;
+    if (
+      this.bakedSun.dot(sunDir) < Math.cos(ATMOSPHERE_REBAKE_STEP) || this.bakedMoon.dot(moonDir) < Math.cos(ATMOSPHERE_REBAKE_STEP)
+      || Math.abs(this.bakedMoonLit - moonLit.value) > 0.02
+    ) {
+      this.bakedSun.copy(sunDir);
+      this.bakedMoon.copy(moonDir);
+      this.bakedMoonLit = moonLit.value;
+      profiler.scope('time of day', 'atmosphere bake (sky + aerial LUTs)', () => this.atmosphere.bake(sunDir, moonDir, moonLit.value, goldenHour(sunDir.y)));
+    }
     this.sunLight.position.copy(this.env.sunDir).multiplyScalar(100);
     this.sunLight.updateMatrixWorld(); // the scene's automatic matrix update is off (see the constructor)
     this.sunLight.color.copy(this.env.sunColor);
     this.skyLight.intensity = 0.1 + 0.9 * daylight;
-    profiler.scope('time of day', 'sprite re-bake', () => this.world?.refreshSprites());
+    // Sprites carry baked shading: re-baked (a column per frame, see World.update) only once the light changed visibly.
+    if (this.spriteSun.dot(this.env.sunDir) < Math.cos(SPRITE_REBAKE_STEP) || Math.abs(this.spriteDaylight - daylight) > 0.02) {
+      this.spriteSun.copy(this.env.sunDir);
+      this.spriteDaylight = daylight;
+      this.world?.refreshSprites();
+    }
   }
 
   /** Graphics quality preset (see render/quality.ts): resolution, shadows / occlusion, light and billboard distances... */
@@ -231,6 +262,14 @@ export class Engine {
     profiler.scope('quality', 'apply preset', () => this.applyQuality());
   }
 
+  /** Debug view of the render pipeline (triangles, AO, shadows...); `final` is the normal image. Not persisted. */
+  get debugView(): DebugView {
+    return this.lighting?.debugView ?? 'final';
+  }
+  set debugView(view: DebugView) {
+    if (this.lighting) this.lighting.debugView = view;
+  }
+
   private applyQuality(): void {
     const q = QUALITY_SETTINGS[this.level];
     this.dynamicRes.reset();
@@ -238,9 +277,12 @@ export class Engine {
     this.lighting?.setQuality(q);
     this.world?.setQuality(q);
     if (this.textures) {
-      const anisotropy = Math.min(q.anisotropy, this.renderer.capabilities.getMaxAnisotropy());
+      const maxAniso = Math.min(q.anisotropy, this.renderer.capabilities.getMaxAnisotropy());
       for (const [name, tex] of Object.entries(this.textures)) {
-        if (name === 'shadowNoise' || tex.anisotropy === anisotropy) continue;
+        if (name === 'shadowNoise') continue;
+        // Full anisotropy only where long grazing views show it (ground, roads); noisy / rarely grazing textures need less.
+        const anisotropy = Math.max(1, Math.min(maxAniso, ANISO_CAP[name] ?? maxAniso));
+        if (tex.anisotropy === anisotropy) continue;
         tex.anisotropy = anisotropy;
         tex.needsUpdate = true;
       }
@@ -380,6 +422,10 @@ export class Engine {
     let acc = 0;
     return (time) => {
       const frameStart = performance.now();
+      if (this.pendingScale !== null) {
+        this.applyResolutionScale(this.pendingScale);
+        this.pendingScale = null;
+      }
       profiler.beginFrame();
       this.renderer.info.reset(); // counters are per frame (autoReset is off, see setupProfiler)
       this.timer.update(time);
@@ -418,7 +464,8 @@ export class Engine {
       const wallMs = this.lastFrameAt ? frameStart - this.lastFrameAt : cpuMs;
       this.lastFrameAt = frameStart;
       const scale = this.dynamicRes.update(wallMs, cpuMs, frameStart / 1000, QUALITY_SETTINGS[this.level].dynamicResolution);
-      if (scale !== null) this.applyResolutionScale(scale);
+      // Applied at the start of the next frame: resizing the canvas after this frame was drawn would clear it before it is presented.
+      if (scale !== null) this.pendingScale = scale;
 
       frames++;
       acc += dt;
@@ -489,6 +536,9 @@ function dirtPercent({ heights, dirt, waterLevel, size, play }: Terrain): number
     }
   return land ? Math.round((sum / land) * 100) : 0;
 }
+
+/** Anisotropy ceiling per texture (see `applyQuality`); names not listed use the preset's value. */
+const ANISO_CAP: Record<string, number> = { waterNormal: 2, rock: 4, snow: 4, sand: 4, dirt: 4 };
 
 async function loadTextures(): Promise<TerrainTextures> {
   const loader = new THREE.TextureLoader();

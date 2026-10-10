@@ -72,6 +72,15 @@
         </select>
       </label>
 
+      <label class="select">
+        <span>Debug view</span>
+        <select x-model="debugView" @change="setDebugView()">
+          <template x-for="v in debugViews" :key="v.id">
+            <option :value="v.id" x-text="v.label" :disabled="v.post && quality === 'low'"></option>
+          </template>
+        </select>
+      </label>
+
       <div class="debug">
         <textarea id="debug-text" readonly rows="5" x-model="debug" spellcheck="false"></textarea>
         <button type="button" @click="copyDebug()" x-text="copied ? 'Copied ✓' : 'Copy debug info'"></button>

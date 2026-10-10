@@ -22,11 +22,20 @@ const STREAM_MARGIN = 0.8;
 const STREAM_DISTANCE = 900;
 /** Ground this close above the water level (m) still counts as wet when deciding which chunks get a water quad. */
 const WET_MARGIN = 0.3;
-/** Terrain detail levels: grid step (cells between vertices) and the camera distance up to which each is used. */
+/** Per-chunk terrain detail levels: grid step (cells between vertices) and the camera distance up to which each is used. */
 const TERRAIN_LODS = [
   { step: 1, maxDist: 260 },
   { step: 2, maxDist: 520 },
-  { step: 4, maxDist: Infinity },
+];
+/**
+ * Far terrain: `SUPER_CHUNKS` x `SUPER_CHUNKS` chunks drawn as one mesh (a few draw calls instead of hundreds). A level is used
+ * from `minDist` to `maxDist` camera distance to the super chunk's centre; the chunks' last level is switched off by that same
+ * distance (`lodMaxCenter`), so there is neither a gap nor an overlap. A super chunk exists once all its chunks are built.
+ */
+const SUPER_CHUNKS = 4;
+const SUPER_LODS = [
+  { step: 4, minDist: 520, maxDist: 1000 },
+  { step: 8, minDist: 1000, maxDist: Infinity },
 ];
 
 /** The rendered height field (the whole generated grid, play area plus surroundings). */
@@ -37,6 +46,13 @@ interface ChunkLod {
   level: number;
   /** Rewrites heights, normals and skirt drops from the current heightmap. */
   fill(): void;
+}
+
+interface SuperChunk {
+  center: THREE.Vector3;
+  /** Chunk keys it replaces at a distance. */
+  keys: number[];
+  levels: ChunkLod[];
 }
 
 export class GroundLayer {
@@ -50,6 +66,10 @@ export class GroundLayer {
   private grid: ChunkGrid | null = null;
   /** Chunk key -> its detail levels. */
   private chunks = new Map<number, ChunkLod[]>();
+  /** Super chunk key -> its far meshes (only complete ones). */
+  private supers = new Map<number, SuperChunk>();
+  /** Super chunks with a changed chunk, waiting for `flushSupers`. */
+  private dirtySupers = new Set<number>();
   /** Chunk key -> its water quad (x0, z0, x1, z1; only chunks with wet ground). All quads are drawn as ONE mesh (`waterMesh`). */
   private waters = new Map<number, [number, number, number, number]>();
   private waterMesh: THREE.Mesh | null = null;
@@ -275,6 +295,7 @@ export class GroundLayer {
         lod.mesh.userData.boundsDirty = true;
       }
       this.updateWater(key, i0, j0, i1, j1);
+      this.updateSuper(key);
       return;
     }
     const lods = TERRAIN_LODS.map(({ step }, level) => {
@@ -285,8 +306,64 @@ export class GroundLayer {
       return { mesh, level, fill };
     });
     this.chunks.set(key, lods);
-    this.applyLod(lods);
+    this.applyLod(key);
     this.updateWater(key, i0, j0, i1, j1);
+    this.updateSuper(key);
+  }
+
+  private superKey(chunkKey: number): number {
+    const count = Math.ceil((this.ground!.size - 1) / CHUNK_CELLS);
+    const per = Math.ceil(count / SUPER_CHUNKS);
+    return Math.floor(Math.floor(chunkKey / count) / SUPER_CHUNKS) * per + Math.floor((chunkKey % count) / SUPER_CHUNKS);
+  }
+
+  /**
+   * Builds the far mesh covering chunk `key` once every chunk it replaces exists (until then those chunks keep their own
+   * levels at any distance), or rewrites it in place when one of them changed.
+   */
+  private updateSuper(key: number): void {
+    const g = this.ground;
+    if (!g) return;
+    const N = g.size;
+    const count = Math.ceil((N - 1) / CHUNK_CELLS);
+    const per = Math.ceil(count / SUPER_CHUNKS);
+    const sKey = this.superKey(key);
+    if (this.supers.has(sKey)) {
+      this.dirtySupers.add(sKey); // refilled once by `flushSupers`, however many of its chunks changed
+      return;
+    }
+    const sx = sKey % per, sy = Math.floor(sKey / per);
+    const keys: number[] = [];
+    for (let cj = sy * SUPER_CHUNKS; cj < Math.min(count, (sy + 1) * SUPER_CHUNKS); cj++)
+      for (let ci = sx * SUPER_CHUNKS; ci < Math.min(count, (sx + 1) * SUPER_CHUNKS); ci++) keys.push(cj * count + ci);
+    if (!keys.every((k) => this.chunks.has(k))) return;
+    const span = SUPER_CHUNKS * CHUNK_CELLS;
+    const i0 = sx * span, j0 = sy * span;
+    const i1 = Math.min(N - 1, i0 + span), j1 = Math.min(N - 1, j0 + span);
+    const half = g.worldSize / 2;
+    const center = new THREE.Vector3(-half + ((i0 + i1) / 2) * g.cell, 0, -half + ((j0 + j1) / 2) * g.cell);
+    const levels = SUPER_LODS.map(({ step }, level) => {
+      const { geo, fill } = terrainChunkGeometry(g, i0, j0, i1, j1, step);
+      const mesh = new THREE.Mesh(geo, this.terrainMat);
+      mesh.userData.lodCenter = center;
+      this.group.add(mesh);
+      return { mesh, level, fill };
+    });
+    this.supers.set(sKey, { center, keys, levels });
+    this.applyLod(...keys);
+  }
+
+  /** Rewrites the far meshes whose chunks changed since the last call (call before the culler picks up `boundsDirty`). */
+  flushSupers(): void {
+    for (const sKey of this.dirtySupers) {
+      const sup = this.supers.get(sKey);
+      if (!sup) continue;
+      for (const lod of sup.levels) {
+        lod.fill();
+        lod.mesh.userData.boundsDirty = true;
+      }
+    }
+    this.dirtySupers.clear();
   }
 
   /** Rebuilds the vertical walls around the map edge from the current heights. */
@@ -341,13 +418,38 @@ export class GroundLayer {
   /** Scales the terrain detail-level distances (quality setting). */
   setLodScale(scale: number): void {
     this.lodScale = scale;
-    for (const lods of this.chunks.values()) this.applyLod(lods);
+    this.applyLod(...this.chunks.keys());
+    for (const { levels } of this.supers.values()) this.applySuperLod(levels);
   }
 
-  private applyLod(lods: ChunkLod[]): void {
-    for (const { mesh, level } of lods) {
-      mesh.userData.lodMin = level ? TERRAIN_LODS[level - 1].maxDist * this.lodScale : 0;
-      mesh.userData.lodMax = TERRAIN_LODS[level].maxDist * this.lodScale;
+  /** Detail-level distances of chunks `keys`; the last level hands over to the super chunk (once it exists) by its centre. */
+  private applyLod(...keys: number[]): void {
+    const last = TERRAIN_LODS.length - 1;
+    for (const key of keys) {
+      const lods = this.chunks.get(key);
+      if (!lods) continue;
+      const sup = this.supers.get(this.superKey(key));
+      for (const { mesh, level } of lods) {
+        mesh.userData.lodMin = level ? TERRAIN_LODS[level - 1].maxDist * this.lodScale : 0;
+        if (level === last && !sup) {
+          mesh.userData.lodMax = Infinity; // nothing takes over yet
+          mesh.userData.lodMaxCenter = undefined;
+        } else {
+          mesh.userData.lodMax = TERRAIN_LODS[level].maxDist * this.lodScale;
+          mesh.userData.lodMaxCenter = level === last ? sup!.center : undefined;
+        }
+      }
+    }
+    for (const key of keys) {
+      const sup = this.supers.get(this.superKey(key));
+      if (sup) this.applySuperLod(sup.levels);
+    }
+  }
+
+  private applySuperLod(levels: ChunkLod[]): void {
+    for (const { mesh, level } of levels) {
+      mesh.userData.lodMin = SUPER_LODS[level].minDist * this.lodScale;
+      mesh.userData.lodMax = SUPER_LODS[level].maxDist * this.lodScale;
     }
   }
 
@@ -399,6 +501,8 @@ export class GroundLayer {
       this.group.remove(child);
     }
     this.chunks.clear();
+    this.supers.clear();
+    this.dirtySupers.clear();
     this.waters.clear();
     this.waterMesh = null;
     this.edge = [];

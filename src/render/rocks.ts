@@ -6,7 +6,7 @@ import type { Environment, TerrainTextures } from './world.ts';
 import { groupByChunk, type ChunkGrid } from './culling.ts';
 import rockVertex from './shaders/rock.vert.glsl';
 import rockFragment from './shaders/rock.frag.glsl';
-import { SHADOW_ONLY_MATERIAL, SPRITE_LOD_BLEND, applySpriteAtlas, bakeAtlas, bakeMaterial, createSpriteLod, createSpriteMaterial, shadowProxy, spriteAttribute, spriteQuadAll, type SpriteAtlas, type SpriteLod } from './billboard.ts';
+import { SHADOW_ONLY_MATERIAL, SPRITE_LOD_BLEND, SPRITE_PITCH_COUNT, applySpriteAtlas, bakeAtlas, bakeMaterial, createSpriteLod, createSpriteMaterial, shadowProxy, spriteAttribute, spriteQuadAll, type SpriteAtlas, type SpriteLod } from './billboard.ts';
 
 /** Fixed seed for the rock meshes: shapes are shared by every map. */
 const SHAPE_SEED = 7919;
@@ -91,10 +91,10 @@ export class RockLayer {
   }
 
   /** Renders every shape at every sprite pitch into the atlas (reusing its texture when there is one). */
-  private bake(): SpriteAtlas {
+  private bake(colFrom = 0, colTo = SPRITE_PITCH_COUNT): SpriteAtlas {
     const material = bakeMaterial(this.material);
     const entries = this.shapes.map((geometry) => ({ geometry, material, originY: BAKE_Y }));
-    const atlas = bakeAtlas(this.renderer, entries, BILLBOARD_RES, this.atlas ?? undefined);
+    const atlas = bakeAtlas(this.renderer, entries, BILLBOARD_RES, this.atlas ?? undefined, colFrom, colTo);
     material.dispose();
     return (this.atlas = atlas);
   }
@@ -103,6 +103,11 @@ export class RockLayer {
   rebake(): void {
     if (!this.hasRocks) return; // `add` bakes fresh for the next map
     applySpriteAtlas(this.billboardMaterials[0], this.bake());
+  }
+
+  /** Re-bakes one pitch column of the atlas (the same texture); a full re-bake spread over frames. */
+  rebakeColumn(col: number): void {
+    if (this.hasRocks && this.atlas) this.bake(col, col + 1);
   }
 
   /** Starts a new map: removes the old rocks; `add` then brings in the new ones band by band. */
