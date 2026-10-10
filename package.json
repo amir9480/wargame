@@ -1,0 +1,31 @@
+{
+  "name": "wargame",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "packageManager": "pnpm@10.11.1",
+  "scripts": {
+    "textures": "node scripts/generate-textures.ts --force",
+    "textures:ensure": "node scripts/generate-textures.ts",
+    "dev": "pnpm textures:ensure && vite",
+    "build": "pnpm textures:ensure && tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "tauri": "tauri",
+    "app:dev": "tauri dev",
+    "app:build": "tauri build"
+  },
+  "dependencies": {
+    "alpinejs": "^3.17.4",
+    "three": "^0.186.1"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.12.1",
+    "@types/alpinejs": "^3.17.0",
+    "@types/node": "^26.6.4",
+    "@types/three": "^0.186.0",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.2",
+    "vite-plugin-glsl": "^1.6.2"
+  }
+}

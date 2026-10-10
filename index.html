@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Wargame – Terrain</title>
+    <link rel="icon" href="data:," />
+  </head>
+  <body>
+    <div id="viewport"></div>
+
+    <aside class="panel" x-data="mapPanel">
+      <h1>Terrain Generator</h1>
+
+      <form class="seed-row" @submit.prevent="generate()">
+        <label for="seed">Seed</label>
+        <input id="seed" type="number" min="0" :max="maxSeed" step="1" x-model="seed" />
+        <button type="submit" :disabled="busy">Generate</button>
+        <button type="button" :disabled="busy" @click="randomSeed()" title="Random seed">🎲</button>
+      </form>
+
+      <div class="progress" x-show="progress" x-cloak>
+        <span x-text="progress?.label"></span>
+        <div class="bar"><div :style="`width: ${Math.round((progress?.fraction ?? 0) * 100)}%`"></div></div>
+      </div>
+
+      <p class="error" x-show="error" x-text="`WebGL unavailable: ${error}`"></p>
+
+      <dl class="info" x-show="info">
+        <dt>Seed</dt><dd x-text="info?.seed"></dd>
+        <dt>Size</dt><dd x-text="info ? `${info.size} × ${info.size}` : ''"></dd>
+        <dt>Sea sides</dt><dd class="cap" x-text="seaLabel"></dd>
+        <dt>Mountain edges</dt><dd class="cap" x-text="mountainLabel"></dd>
+        <dt>Rivers</dt><dd x-text="info ? `${info.riverCount}` + (info.tributaries ? ` (${info.tributaries} tributary)` : '') : ''"></dd>
+        <dt>Bases</dt><dd x-text="info ? `4 · ${info.baseSize}×${info.baseSize} m · ${info.baseGap} m apart` : ''"></dd>
+        <dt>Roads</dt><dd x-text="info ? `${info.roadKm} km` + (info.asphaltKm ? ` (${info.asphaltKm} asphalt)` : '') : ''"></dd>
+        <dt>Railway</dt><dd x-text="info ? (info.railKm ? `${info.railKm} km · ${info.levelCrossings} level crossings` : 'none') : ''"></dd>
+        <dt>Junctions</dt><dd x-text="info?.junctions"></dd>
+        <dt>Bridges</dt><dd x-text="info?.bridges"></dd>
+        <dt>Towns</dt><dd x-text="info ? (info.cityCount ? `${info.cityCount} · ${info.cityBuildings} buildings` : 'none') : ''"></dd>
+        <dt>Buildings</dt><dd x-text="info ? `${info.buildingCount} (${info.abandoned} abandoned, ${info.construction} unfinished` + (destroyed ? `, ${destroyed} destroyed)` : ')') : ''"></dd>
+        <dt>Trees</dt><dd class="cap" x-text="info ? `${info.treeCount} ${info.treeType}` : ''"></dd>
+        <dt>Dirt</dt><dd x-text="info ? `${info.dirtPercent}% of land` : ''"></dd>
+        <dt>Rocks</dt><dd x-text="info?.rockCount"></dd>
+        <dt>Land</dt><dd x-text="info ? `${info.landPercent}%` : ''"></dd>
+        <dt>Gen time</dt><dd x-text="info ? `${info.genMs} ms` : ''"></dd>
+        <dt>Load time</dt><dd x-text="info ? `${info.loadMs} ms` : ''"></dd>
+        <dt>FPS</dt><dd x-text="fps"></dd>
+        <dt>Drawn</dt><dd x-text="chunks ? `${drawn} / ${chunks} chunk meshes` : ''"></dd>
+      </dl>
+
+      <div class="buttons" x-show="info">
+        <button type="button" @click="destroySome()" title="Destroy a random tenth of the standing buildings">💥 Destroy some</button>
+        <button type="button" @click="repairAll()" :disabled="!destroyed">Repair all</button>
+        <button type="button" @click="toggleFreeze()" :class="{ active: frozen }" title="Debug: keep culling, LOD and shadows on the current view while the camera flies free">
+          <span x-text="frozen ? '🧊 Unfreeze camera' : '🧊 Freeze camera'"></span>
+        </button>
+      </div>
+
+      <label class="slider">
+        <span>Time of day <b x-text="hourLabel"></b></span>
+        <input type="range" min="0" max="24" step="0.01" x-model="hour" @input="setHour($event.target.value)" />
+      </label>
+
+      <label class="select">
+        <span>Graphics quality</span>
+        <select x-model="quality" @change="setQuality()">
+          <option value="low">Low</option>
+          <option value="normal">Normal</option>
+          <option value="high">High</option>
+          <option value="ultra">Ultra</option>
+        </select>
+      </label>
+
+      <div class="debug">
+        <textarea id="debug-text" readonly rows="5" x-model="debug" spellcheck="false"></textarea>
+        <button type="button" @click="copyDebug()" x-text="copied ? 'Copied ✓' : 'Copy debug info'"></button>
+      </div>
+
+      <div class="profiler">
+        <button type="button" @click="toggleProfile()" :class="{ recording: profiling }" title="Record CPU / GPU timings of every render step, then show a summary with bottleneck hints">
+          <span x-text="profiling ? `⏹ Stop recording · ${profileSecs.toFixed(1)} s` : '⏺ Record profiler'"></span>
+        </button>
+        <label class="detail" title="Draws the scene and shadow pass layer by layer, times each blur / AO pass, and probes the post shader with features switched off. Frame times run a little high and the picture flickers briefly.">
+          <input type="checkbox" x-model="profileDetail" :disabled="profiling" />
+          <span>Detailed timing (per layer / per pass)</span>
+        </label>
+        <template x-if="report && !profiling">
+          <div class="report">
+            <textarea id="profiler-text" readonly x-model="report" spellcheck="false" wrap="off"></textarea>
+            <div class="row">
+              <button type="button" @click="copyReport()" x-text="reportCopied ? 'Copied ✓' : 'Copy report'"></button>
+              <button type="button" @click="report = ''">Close</button>
+            </div>
+          </div>
+        </template>
+      </div>
+
+      <p class="help">
+        <b>Pan</b> WASD / arrows / screen edge &middot; <b>Rotate</b> middle-drag, Q/E &middot;
+        <b>Zoom</b> wheel &middot; <b>Shift</b> fast pan
+      </p>
+    </aside>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
