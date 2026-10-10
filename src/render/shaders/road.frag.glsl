@@ -8,6 +8,8 @@ uniform sampler2D tDirt;
 uniform sampler2D tGrass;
 uniform sampler2D tAsphalt;
 uniform float halfWidth;
+uniform vec4 townPos;
+uniform float townCount;
 uniform vec3 sunDir;
 uniform vec3 sunColor;
 uniform vec3 skyAmbient;
@@ -26,6 +28,7 @@ varying vec4 vJuncW;
 
 #include ./chunks/fog.glsl;
 #include ./chunks/lod.glsl;
+#include ./chunks/paving.glsl;
 
 void main() {
   float x = abs(vRoad.x);
@@ -91,12 +94,16 @@ void main() {
   if ((walkOn > 0.0 && x > halfWidth - 0.02) || (plate > 0.5 && plateRoad < 0.5)) {
     float o = plate > 0.5 ? curbDist : x - halfWidth;
     // 0.5 m paving slabs with dark joints, a little texture variation (near only; far: the average slab).
-    vec3 paving = vec3(0.66, 0.64, 0.6) * PAVING_AVG;
+    // Every sidewalk of a town is connected: one colour per town (the nearest town centre).
+    float town_key = 1.0;
+    if (townCount > 1.5 && distance(vWorldPos.xz, townPos.zw) < distance(vWorldPos.xz, townPos.xy)) town_key = 2.0;
+    vec3 pave = vec3(0.66, 0.64, 0.6) * pavingTint(town_key);
+    vec3 paving = pave * PAVING_AVG;
     if (detail > 0.0) {
       vec2 slab = (plate > 0.5 ? vWorldPos.xz : vec2(along, o)) / 0.5;
       vec2 j = abs(fract(slab) - 0.5);
       float joint = smoothstep(0.43, 0.48, max(j.x, j.y));
-      vec3 near = vec3(0.66, 0.64, 0.6) * (0.85 + 0.25 * texture2D(tDirt, vWorldPos.xz / 3.0).r) * (1.0 - joint * 0.25);
+      vec3 near = pave * (0.85 + 0.25 * texture2D(tDirt, vWorldPos.xz / 3.0).r) * (1.0 - joint * 0.25);
       paving = mix(paving, near, detail);
     }
     vec3 curb = vec3(0.78, 0.77, 0.74);

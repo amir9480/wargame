@@ -18,6 +18,8 @@ interface Saved {
   hour: number;
   quality: Quality;
   camera: CameraView | null;
+  /** Control panel folded to its title bar. */
+  collapsed: boolean;
 }
 
 function isCameraView(v: unknown): v is CameraView {
@@ -28,13 +30,14 @@ function isCameraView(v: unknown): v is CameraView {
 
 /** localStorage can be missing, full or blocked: every access is guarded and falls back to the defaults. */
 function loadSaved(): Saved {
-  const saved: Saved = { seed: DEFAULT_SEED, hour: DEFAULT_HOUR, quality: DEFAULT_QUALITY, camera: null };
+  const saved: Saved = { seed: DEFAULT_SEED, hour: DEFAULT_HOUR, quality: DEFAULT_QUALITY, camera: null, collapsed: false };
   try {
     const raw = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '{}');
     if (typeof raw.seed === 'number' && Number.isFinite(raw.seed)) saved.seed = normalizeSeed(raw.seed);
     if (typeof raw.hour === 'number' && raw.hour >= 0 && raw.hour <= 24) saved.hour = raw.hour;
     if (isQuality(raw.quality)) saved.quality = raw.quality;
     if (isCameraView(raw.camera)) saved.camera = raw.camera;
+    if (typeof raw.collapsed === 'boolean') saved.collapsed = raw.collapsed;
   } catch {
     // keep the defaults
   }
@@ -103,6 +106,11 @@ Alpine.data('mapPanel', () => ({
   debugViews: DEBUG_VIEWS,
   hour: saved.hour as number | string,
   error: engineError,
+  collapsed: saved.collapsed,
+  toggleCollapsed() {
+    this.collapsed = !this.collapsed;
+    save({ collapsed: this.collapsed });
+  },
   /** Buildings destroyed on the current map (destruction test buttons). */
   destroyed: 0,
   /** Debug snapshot shown in the panel (refreshed with the stats). */

@@ -43,6 +43,11 @@ export class RoadLayer {
   /** Second asphalt pass: bare pavement laid over every road's shoulder, so junctions read as one surface. */
   private pavementMat: THREE.ShaderMaterial;
   private bridgeMat: THREE.ShaderMaterial;
+  /** Shared by the road materials: map seed (sets the sidewalk colours). */
+  private mapSeed = { value: 0 };
+  /** Town centres (x, z of up to two) and their count: each town's sidewalks share one colour. */
+  private townPos = { value: new THREE.Vector4() };
+  private townCount = { value: 0 };
 
   constructor(textures: TerrainTextures, env: Environment) {
     const lighting = () => ({
@@ -78,6 +83,9 @@ export class RoadLayer {
           tGrass: { value: textures.grass },
           tAsphalt: { value: textures.asphalt },
           halfWidth: { value: 1 },
+          mapSeed: this.mapSeed,
+          townPos: this.townPos,
+          townCount: this.townCount,
           ...lighting(),
         },
       });
@@ -100,6 +108,10 @@ export class RoadLayer {
   /** Removes the old roads, then returns the build as separate steps (one per road type, then bridges) to run in order. */
   steps(terrain: Terrain, grid: ChunkGrid): (() => void)[] {
     this.clear();
+    this.mapSeed.value = terrain.seed % 9973;
+    const [a, b] = terrain.cities;
+    this.townCount.value = terrain.cities.length;
+    this.townPos.value.set(a?.x ?? 0, a?.z ?? 0, b?.x ?? 0, b?.z ?? 0);
     const { edges } = terrain.roads;
     const offsets = dashOffsets(terrain.roads);
     // Town intersections: crosswalk + stop line on every road arriving there.

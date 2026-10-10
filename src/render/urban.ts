@@ -67,7 +67,7 @@ export class UrbanLayer {
       fragmentShader: decalFragment,
       transparent: true,
       depthWrite: false,
-      uniforms: { ...lighting(), tDirt: { value: textures.dirt }, tAsphalt: { value: textures.asphalt } },
+      uniforms: { ...lighting(), mapSeed: { value: 0 }, tDirt: { value: textures.dirt }, tAsphalt: { value: textures.asphalt } },
     });
     this.signalModel = trafficLightModel();
   }
@@ -78,6 +78,7 @@ export class UrbanLayer {
 
   build(t: Terrain, grid: ChunkGrid): void {
     this.clear();
+    this.decalMaterial.uniforms.mapSeed.value = t.seed % 9973;
 
     // Ground decals: paved town yards, gas station forecourts, car parks (with driveways to their street).
     const decals = new DecalBuffers();
@@ -244,7 +245,7 @@ export function groundPatches(t: Pick<Terrain, 'roads' | 'buildings' | 'parking'
       out.push({ frame: b, u0: -b.width / 2 - 1, u1: b.width / 2 + 1, v0: -b.depth / 2 - 1, v1: b.depth / 2 + toRoad(roads, b, 0.3), kind: DECAL_ASPHALT, lot: [0, 0, 0, 0] });
     } else if (b.city >= 0) {
       const front = Math.max(0.3, toRoad(roads, b, 0.3) - CURB_GAP - SIDEWALK_WIDTH);
-      out.push({ frame: b, u0: -b.width / 2 - YARD, u1: b.width / 2 + YARD, v0: -b.depth / 2 - YARD, v1: b.depth / 2 + front, kind: DECAL_PAVING, lot: [0, 0, 0, 0] });
+      out.push({ frame: b, u0: -b.width / 2 - YARD, u1: b.width / 2 + YARD, v0: -b.depth / 2 - YARD, v1: b.depth / 2 + front, kind: DECAL_PAVING, lot: [(b.seed % 997) + 1, 0, 0, 0] });
     }
   }
   for (const lot of t.parking) {

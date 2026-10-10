@@ -57,9 +57,32 @@ body {
 }
 
 .panel h1 {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
   margin: 0 0 10px;
   font-size: 15px;
   font-weight: 600;
+  cursor: pointer;
+}
+
+.panel.collapsed {
+  width: auto;
+  overflow: hidden;
+}
+
+.panel.collapsed h1 {
+  margin: 0;
+  gap: 14px;
+}
+
+.panel .collapse {
+  padding: 0 6px;
+  background: transparent;
+  border: none;
+  color: inherit;
+  font-size: 14px;
+  cursor: pointer;
 }
 
 .seed-row {

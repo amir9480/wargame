@@ -13,6 +13,7 @@ varying vec4 vLot;
 
 #include ./chunks/fog.glsl;
 #include ./chunks/lod.glsl;
+#include ./chunks/paving.glsl;
 
 void main() {
   vec3 col;
@@ -20,11 +21,12 @@ void main() {
   float detail = surfaceDetail(vWorldPos);
   if (vKind < 1.5) {
     // Paving slabs, as on the sidewalks (road.frag.glsl); far: the average slab.
-    col = vec3(0.66, 0.64, 0.6) * PAVING_AVG;
+    vec3 pave = vec3(0.66, 0.64, 0.6) * pavingTint(vLot.x);
+    col = pave * PAVING_AVG;
     if (detail > 0.0) {
       vec2 j = abs(fract(vWorldPos.xz / 0.5) - 0.5);
       float joint = smoothstep(0.43, 0.48, max(j.x, j.y));
-      col = mix(col, vec3(0.66, 0.64, 0.6) * (0.85 + 0.25 * texture2D(tDirt, vWorldPos.xz / 3.0).r) * (1.0 - joint * 0.25), detail);
+      col = mix(col, pave * (0.85 + 0.25 * texture2D(tDirt, vWorldPos.xz / 3.0).r) * (1.0 - joint * 0.25), detail);
     }
   } else {
     col = texture2D(tAsphalt, vWorldPos.xz / 7.0).rgb;

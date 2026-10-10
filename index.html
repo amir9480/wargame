@@ -9,8 +9,13 @@
   <body>
     <div id="viewport"></div>
 
-    <aside class="panel" x-data="mapPanel">
-      <h1>Terrain Generator</h1>
+    <aside class="panel" :class="{ collapsed }" x-data="mapPanel">
+      <h1 @click="toggleCollapsed()" title="Show / hide the panel">
+        <span>Terrain Generator</span>
+        <button type="button" class="collapse" :aria-expanded="!collapsed" x-text="collapsed ? '▸' : '▾'"></button>
+      </h1>
+
+      <div class="body" x-show="!collapsed">
 
       <form class="seed-row" @submit.prevent="generate()">
         <label for="seed">Seed</label>
@@ -109,6 +114,7 @@
         <b>Pan</b> WASD / arrows / screen edge &middot; <b>Rotate</b> middle-drag, Q/E &middot;
         <b>Zoom</b> wheel &middot; <b>Shift</b> fast pan
       </p>
+      </div>
     </aside>
 
     <script type="module" src="/src/main.ts"></script>
