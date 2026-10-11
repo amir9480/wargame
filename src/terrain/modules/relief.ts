@@ -9,6 +9,7 @@ import { seaMask, type SeaSide } from './sea.ts';
 import { edgeRangeHeight, type EdgeRange } from './ranges.ts';
 import { floodShape, samplePatch, type PatchView } from '../mountains/library.ts';
 import type { PlayArea } from '../types.ts';
+import { linearScale } from '../scale.ts';
 
 /** Peak height (m) of inland mountains. */
 const INLAND_HEIGHT = 55;
@@ -75,7 +76,8 @@ function reliefHeight(
   const ci = (u - 0.5) * span, cj = (v - 0.5) * span;
   const inlandPeaks = mountainZone > 0 ? INLAND_HEIGHT * floodShape(samplePatch(mountains.inland, ci, cj), mountainZone) : 0;
   const edgePeaks = edgeRangeHeight(u, v, ranges, detail, (r) => samplePatch(mountains.ranges[r.index], ci, cj));
-  const peaks = Math.max(inlandPeaks, edgePeaks) * sea;
+  // Bigger maps carry taller mountains in proportion to their side (a 2x wide map: 2x high summits, same slopes).
+  const peaks = Math.max(inlandPeaks, edgePeaks) * sea * linearScale(span);
   const land = 1.5 + base * base * 12 + hills * 3 * base + peaks;
   const seaFloor = -10 + fbm(detail, u * 6 + 300, v * 6 + 300, 2) * 3;
   out.height = lerp(seaFloor, land, sea);

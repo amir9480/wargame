@@ -39,7 +39,7 @@ const SUPER_LODS = [
 ];
 
 /** The rendered height field (the whole generated grid, play area plus surroundings). */
-export type Ground = Pick<Terrain, 'size' | 'cell' | 'worldSize' | 'waterLevel' | 'heights'>;
+export type Ground = Pick<Terrain, 'size' | 'cell' | 'worldSize' | 'waterLevel' | 'heightScale' | 'heights'>;
 
 interface ChunkLod {
   mesh: THREE.Mesh;
@@ -98,6 +98,7 @@ export class GroundLayer {
         fogFar: { value: 1200 },
         waterLevel: { value: 0 },
         snowLine: { value: SNOW_LINE },
+        heightScale: { value: 1 },
         tCover: { value: null },
         mapSize: { value: 1 },
         gridSize: { value: 1 },
@@ -168,6 +169,9 @@ export class GroundLayer {
     this.coverTex = dataTexture(new Uint8Array(N * N * 2), N, THREE.RGFormat, THREE.UnsignedByteType);
     const tu = this.terrainMat.uniforms;
     tu.waterLevel.value = ground.waterLevel;
+    // Height-based looks (snow line, bare rock on high ground) follow the mountains' vertical scale.
+    tu.heightScale.value = ground.heightScale;
+    tu.snowLine.value = SNOW_LINE * ground.heightScale;
     tu.tCover.value = this.coverTex;
     tu.mapSize.value = ground.worldSize;
     tu.gridSize.value = N;
@@ -430,6 +434,7 @@ export class GroundLayer {
       if (!lods) continue;
       const sup = this.supers.get(this.superKey(key));
       for (const { mesh, level } of lods) {
+        mesh.userData.lodLevel = level; // LOD levels debug view
         mesh.userData.lodMin = level ? TERRAIN_LODS[level - 1].maxDist * this.lodScale : 0;
         if (level === last && !sup) {
           mesh.userData.lodMax = Infinity; // nothing takes over yet
@@ -448,6 +453,7 @@ export class GroundLayer {
 
   private applySuperLod(levels: ChunkLod[]): void {
     for (const { mesh, level } of levels) {
+      mesh.userData.lodLevel = TERRAIN_LODS.length + level; // LOD levels debug view
       mesh.userData.lodMin = SUPER_LODS[level].minDist * this.lodScale;
       mesh.userData.lodMax = SUPER_LODS[level].maxDist * this.lodScale;
     }

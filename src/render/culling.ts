@@ -52,11 +52,16 @@ export function groupByChunk<T extends { x: number; z: number }>(items: T[], gri
   return out;
 }
 
+/** Chunk keys stay below this, so `chunk + (class + 1) * CLASS_KEY` is unique per chunk and class. */
+const CLASS_KEY = 1 << 20;
+
 /**
  * Splits a geometry (world-space positions) into one geometry per chunk, assigning
  * each triangle by its centroid. All attributes are carried over; the result is indexed.
+ * `classify` (optional) also separates the triangles of one chunk by a class number of their centroid (e.g. the town they
+ * lie in, -1 = none); every part carries it as `userData.group` (-1 without `classify`).
  */
-export function splitByChunk(geo: THREE.BufferGeometry, grid: ChunkGrid): THREE.BufferGeometry[] {
+export function splitByChunk(geo: THREE.BufferGeometry, grid: ChunkGrid, classify?: (x: number, z: number) => number): THREE.BufferGeometry[] {
   const pos = geo.attributes.position;
   const index = geo.index;
   const triCount = (index ? index.count : pos.count) / 3;
@@ -67,7 +72,8 @@ export function splitByChunk(geo: THREE.BufferGeometry, grid: ChunkGrid): THREE.
     const a = vert(t, 0), b = vert(t, 1), c = vert(t, 2);
     const x = (pos.getX(a) + pos.getX(b) + pos.getX(c)) / 3;
     const z = (pos.getZ(a) + pos.getZ(b) + pos.getZ(c)) / 3;
-    const k = grid.key(x, z);
+    const cls = classify ? classify(x, z) : -1;
+    const k = grid.key(x, z) + (cls + 1) * CLASS_KEY;
     let list = buckets.get(k);
     if (!list) buckets.set(k, (list = []));
     list.push(t);
@@ -75,7 +81,7 @@ export function splitByChunk(geo: THREE.BufferGeometry, grid: ChunkGrid): THREE.
 
   const names = Object.keys(geo.attributes);
   const out: THREE.BufferGeometry[] = [];
-  for (const tris of buckets.values()) {
+  for (const [bucket, tris] of buckets) {
     const remap = new Map<number, number>();
     const newIndex: number[] = [];
     for (const t of tris) {
@@ -95,6 +101,7 @@ export function splitByChunk(geo: THREE.BufferGeometry, grid: ChunkGrid): THREE.
       part.setAttribute(name, new THREE.BufferAttribute(data, size));
     }
     part.setIndex(newIndex);
+    part.userData.group = Math.floor(bucket / CLASS_KEY) - 1;
     out.push(part);
   }
   return out;

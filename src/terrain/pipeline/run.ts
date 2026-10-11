@@ -4,6 +4,7 @@
 import { createNoise2D } from '../../core/noise.ts';
 import { STAGE, stageRng } from '../seeds.ts';
 import { WATER_LEVEL } from '../types.ts';
+import { linearScale } from '../scale.ts';
 import { GENERATOR_STAGES } from './stages.ts';
 import type { MountainLibrary } from '../mountains/library.ts';
 import { GEN_STAGES, type GenContext, type GenEvent, type Terrain, type TerrainOptions } from './types.ts';
@@ -86,6 +87,7 @@ function assemble(ctx: GenContext): Terrain {
     play,
     playSize: ctx.span * ctx.cell,
     waterLevel: WATER_LEVEL,
+    heightScale: linearScale(ctx.span),
     heights,
     seaSides: ctx.seaSides.map((s) => s.side),
     mountainSides: ctx.ranges.map((r) => r.side),

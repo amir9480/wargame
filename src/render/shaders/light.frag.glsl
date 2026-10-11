@@ -11,6 +11,8 @@ varying vec3 vColor;
 varying vec4 vSpot;
 
 #include ./chunks/fogdist.glsl;
+#include ./chunks/townkeep.glsl;
+uniform vec2 resolution; // size of the main view (the light buffer is a share of it)
 
 vec3 worldAt(vec2 uv, float d) {
   vec4 c = invViewProj * vec4(uv * 2.0 - 1.0, d * 2.0 - 1.0, 1.0);
@@ -19,6 +21,7 @@ vec3 worldAt(vec2 uv, float d) {
 
 void main() {
   vec2 uv = gl_FragCoord.xy / lightResolution;
+  if (!townKeep(uv * resolution)) discard; // a town's detailed lights give way to its city model's, per pixel (townkeep.glsl)
   float d0 = texture2D(tDepth, uv).r;
   if (d0 >= 1.0) discard;
   vec3 P = worldAt(uv, d0);

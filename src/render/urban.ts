@@ -6,7 +6,8 @@
 import * as THREE from 'three';
 import { hash32, mulberry32 } from '../core/rng.ts';
 import { sampleGrid, type ParkingLot, type RoadEdge, type Terrain } from '../terrain/generate.ts';
-import { CURB_GAP, SIDEWALK_WIDTH, SIGNAL_GREEN, SIGNAL_YELLOW, planIntersections } from '../terrain/urban.ts';
+import { CURB_GAP, SIDEWALK_WIDTH, SIGNAL_GREEN, SIGNAL_YELLOW, planIntersections, townAt } from '../terrain/urban.ts';
+import type { TownLod } from './townLod.ts';
 import type { Environment, TerrainTextures } from './world.ts';
 import type { LightDef, LightField, LightGroup } from './lights.ts';
 import { groupByChunk, splitByChunk, type ChunkGrid } from './culling.ts';
@@ -38,7 +39,10 @@ export class UrbanLayer {
   private lights: LightGroup;
   private level = -1;
 
-  constructor(textures: TerrainTextures, env: Environment, field: LightField) {
+  private readonly townLod: TownLod;
+
+  constructor(textures: TerrainTextures, env: Environment, field: LightField, townLod: TownLod) {
+    this.townLod = townLod;
     this.lights = field.createGroup(true);
     const lighting = () => ({
       sunDir: { value: env.sunDir },
@@ -81,6 +85,7 @@ export class UrbanLayer {
     this.decalMaterial.uniforms.mapSeed.value = t.seed % 9973;
 
     // Ground decals: paved town yards, gas station forecourts, car parks (with driveways to their street).
+    // Cut into chunk meshes, those inside a town apart from the rest: a town's decals are hidden beyond its city-model distance.
     const decals = new DecalBuffers();
     for (const p of groundPatches(t)) decals.add(t, p.frame, p.u0, p.u1, p.v0, p.v1, p.kind, p.lot);
     const cars = new MeshData({ aWin: 2 });
@@ -88,10 +93,11 @@ export class UrbanLayer {
     for (const lot of t.parking) parkCars(cars, lot, parkingGate(lot));
     if (decals.count) {
       const whole = decals.geometry();
-      for (const part of splitByChunk(whole, grid)) {
+      for (const part of splitByChunk(whole, grid, (x, z) => townAt(t.cities, x, z))) {
         const mesh = new THREE.Mesh(part, this.decalMaterial);
         mesh.renderOrder = 0.95;
         mesh.userData.noShadow = true;
+        this.townLod.tag(mesh, part.userData.group);
         this.group.add(mesh);
       }
       whole.dispose();
@@ -146,17 +152,25 @@ export class UrbanLayer {
       const at = HEAD_LIGHT.clone().applyAxisAngle(up, p.yaw);
       // Heads face the model's +Z: only traffic in front sees them (and their reflection).
       const facing = new THREE.Vector3(Math.sin(p.yaw), 0, Math.cos(p.yaw));
-      return { x: p.x + at.x, y: p.y + at.y, z: p.z + at.z, groundY: p.y, radius: 5, color: white, intensity: 0.5, facing, signal: [p.group, p.offset] };
+      return { x: p.x + at.x, y: p.y + at.y, z: p.z + at.z, groundY: p.y, radius: 5, color: white, intensity: 0.5, facing, signal: [p.group, p.offset], city: townAt(t.cities, p.x, p.z) };
     });
     this.lights.build(lights, grid);
     this.lights.setHaloRange(this.lodDistance * 0.08, this.lodDistance * 0.35);
+    this.lights.setHaloMax(this.townLod.distance);
     this.level = -1;
   }
 
   setLodDistance(distance: number): void {
     this.lodDistance = distance;
-    for (const child of this.group.children) if (child.userData.lodMax !== undefined && !child.userData.fixedLod) child.userData.lodMax = distance;
+    for (const child of this.group.children) {
+      if (child.userData.lodMax !== undefined && !child.userData.fixedLod && child.userData.townCity === undefined) child.userData.lodMax = distance;
+    }
     this.lights.setHaloRange(distance * 0.08, distance * 0.35);
+  }
+
+  /** The signals are in towns: their far discs end where the towns' city models take over (the models draw no signals). */
+  setTownDistance(distance: number): void {
+    this.lights.setHaloMax(distance);
   }
 
   /** `time`: seconds on the signal clock (the same clock gameplay uses with signalAt). */

@@ -11,8 +11,10 @@ uniform float time; // seconds on the shared render clock
 varying vec2 vUv;
 varying vec3 vColor;
 varying float vBokeh;
+varying vec2 vTown;
 
 #include ./chunks/gameview.glsl;
+#include ./chunks/townfade.glsl;
 #include ./chunks/windows.glsl;
 #include ./chunks/twinkle.glsl;
 
@@ -24,6 +26,7 @@ void main() {
   float fade = smoothstep(haloStart, haloEnd, dist);
   vBokeh = bokehAmount(dist);
   float size = max(scale, dist * 0.006 * haloShrink(dist)) * (1.0 + BOKEH_GROW * vBokeh) * step(0.001, scale);
+  vTown = townFade();
   vColor = instanceColor * level * fade * windowLit(aHalo.xyz, aHalo.w, aHaloShare) * twinkleFar(center, time, dist);
   vec3 right = gameRight;
   vec3 up = gameUp;

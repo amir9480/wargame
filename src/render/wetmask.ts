@@ -8,12 +8,14 @@ import type { Terrain } from '../terrain/generate.ts';
 import { CURB_GAP, SIDEWALK_WIDTH, townAt } from '../terrain/urban.ts';
 import { DECAL_PAVING, groundPatches } from './urban.ts';
 
-/** Mask texel size, world units. */
-const TEXEL = 0.5;
+/** Mask texel size, world units, and the most texels per side (bigger maps get coarser texels instead of a huge texture). */
+const BASE_TEXEL = 0.5;
+const MAX_TEXELS = 4096;
 const CARRIAGEWAY = 255;
 const SIDEWALK = 190;
 
 export function buildWetMask(t: Pick<Terrain, 'worldSize' | 'roads' | 'cities' | 'buildings' | 'parking'>): THREE.DataTexture {
+  const TEXEL = Math.max(BASE_TEXEL, t.worldSize / MAX_TEXELS);
   const n = Math.ceil(t.worldSize / TEXEL);
   const data = new Uint8Array(n * n);
   const half = t.worldSize / 2;

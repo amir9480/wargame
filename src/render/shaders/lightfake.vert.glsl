@@ -9,14 +9,17 @@ uniform float gridSize;
 #endif
 
 #include ./chunks/gameview.glsl;
+#include ./chunks/townfade.glsl;
 #include ./chunks/signal.glsl;
 #include ./chunks/anim.glsl;
 
 varying vec2 vUv;
 varying vec3 vColor;
+varying vec2 vTown;
 
 void main() {
   vUv = uv;
+  vTown = townFade();
   vColor = instanceColor * level;
 #ifdef SIGNAL
   vColor *= signalColor();
@@ -38,4 +41,5 @@ void main() {
   vec4 wp = vec4(center + (right * position.x + up * position.y) * size, 1.0);
 #endif
   gl_Position = projectionMatrix * viewMatrix * wp;
+  if (vTown.y != 0.0 && vTown.x < 0.003) gl_Position = vec4(2.0, 2.0, 2.0, 1.0); // fully handed over to the other level
 }

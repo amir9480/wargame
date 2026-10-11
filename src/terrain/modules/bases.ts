@@ -141,13 +141,19 @@ function pickSpread(cands: { i: number; j: number; fit: number }[], minSpacing: 
   let best: typeof cands = [];
   let bestScore = -Infinity;
   if (!cands.length) return best;
+  const nearest = new Float64Array(cands.length);
   for (let trial = 0; trial < 40; trial++) {
     const set = [cands[Math.floor(rng() * cands.length)]];
+    // Distance of every candidate to the nearest chosen one, kept up to date as the set grows (the candidate list is long on big maps).
+    nearest.fill(Infinity);
+    let added = set[0];
     while (set.length < PLAYER_SLOTS) {
       let pick: (typeof cands)[number] | null = null;
       let pickD = -Infinity;
-      for (const c of cands) {
-        const d = Math.min(...set.map((s) => Math.hypot(s.i - c.i, s.j - c.j)));
+      for (let n = 0; n < cands.length; n++) {
+        const c = cands[n];
+        const d = Math.min(nearest[n], Math.hypot(added.i - c.i, added.j - c.j));
+        nearest[n] = d;
         const score = d + c.fit * 4;
         if (d >= minSpacing && score > pickD) {
           pickD = score;
@@ -156,6 +162,7 @@ function pickSpread(cands: { i: number; j: number; fit: number }[], minSpacing: 
       }
       if (!pick) break;
       set.push(pick);
+      added = pick;
     }
     if (set.length < PLAYER_SLOTS) continue;
     const score = minGap(set) + set.reduce((s, c) => s + c.fit, 0) * 4;

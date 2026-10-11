@@ -29,6 +29,8 @@ export interface Terrain {
   /** Extent of the play area in world units (centred on the origin). */
   playSize: number;
   waterLevel: number;
+  /** Vertical scale of the mountains (1 on maps up to the reference size, see scale.ts): height-based looks (snow line, rock) scale with it. */
+  heightScale: number;
   /** Row-major: heights[j * size + i], i along +X (west->east), j along +Z (north->south). */
   heights: Float32Array;
   seaSides: Side[];
@@ -73,7 +75,7 @@ export interface TerrainOptions {
 /** What is known about a map before any stage ran (grid layout, coasts, edge ranges). */
 export type TerrainMeta = Pick<
   Terrain,
-  'seed' | 'size' | 'cell' | 'worldSize' | 'play' | 'playSize' | 'waterLevel' | 'seaSides' | 'mountainSides'
+  'seed' | 'size' | 'cell' | 'worldSize' | 'play' | 'playSize' | 'waterLevel' | 'heightScale' | 'seaSides' | 'mountainSides'
 >;
 
 /** Generator stages, in pipeline order. */

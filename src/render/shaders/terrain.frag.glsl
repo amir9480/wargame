@@ -9,6 +9,7 @@ uniform vec3 skyAmbient;
 uniform vec3 groundAmbient;
 uniform float waterLevel;
 uniform float snowLine;
+uniform float heightScale; // vertical scale of the mountains (1 = reference map)
 uniform sampler2D tCover; // R: dirt amount, G: forest canopy (per grid cell)
 uniform float mapSize;
 uniform float gridSize;
@@ -69,11 +70,12 @@ void main() {
   float sandW = 1.0 - smoothstep(waterLevel + 0.3, waterLevel + 1.1, h + (macro - 0.4) * 0.6);
   float under = smoothstep(waterLevel, waterLevel - 4.0, h);
   // Rock on steep slopes, and on high ground (mountains) regardless of slope.
+  // (Heights scale with the mountains' vertical scale, so a tall map looks like a small one.)
   float rockW = max(
     smoothstep(0.26, 0.48, slope + (macro - 0.4) * 0.15),
-    smoothstep(14.0, 22.0, h + (macro - 0.4) * 6.0) * 0.85
+    smoothstep(14.0 * heightScale, 22.0 * heightScale, h + (macro - 0.4) * 6.0 * heightScale) * 0.85
   );
-  float snowW = smoothstep(snowLine - 5.0, snowLine + 5.0, h + (macro - 0.4) * 16.0)
+  float snowW = smoothstep(snowLine - 5.0 * heightScale, snowLine + 5.0 * heightScale, h + (macro - 0.4) * 16.0 * heightScale)
               * (1.0 - smoothstep(0.25, 0.45, slope + (macro - 0.4) * 0.2)); // slides off faces steeper than ~40 degrees
 
   // Each ground texture only where it shows (gradients were taken above, outside the branches).

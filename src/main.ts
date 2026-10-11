@@ -54,6 +54,28 @@ function save(patch: Partial<Saved>): void {
 
 const saved = loadSaved();
 
+/**
+ * Tauri command line capture (`wargame.exe --seed N --hour H --quality Q --camera x,z,yaw,pitch,distance --screenshot out.png [--shot-delay s]`):
+ * the native side seeds the settings and `window.__SHOT`; once the map is generated and has had `delay` seconds to build, the frame is
+ * handed back to save as PNG and the app exits.
+ */
+async function captureRequested(eng: Engine): Promise<void> {
+  const shot = (window as unknown as { __SHOT?: { path: string; delay: number; profile: number } }).__SHOT;
+  const invoke = (window as unknown as { __TAURI_INTERNALS__?: { invoke: (cmd: string, args: unknown) => Promise<unknown> } }).__TAURI_INTERNALS__?.invoke;
+  if (!shot || !invoke) return;
+  await new Promise((r) => setTimeout(r, shot.delay * 1000));
+  let report = '';
+  if (shot.profile > 0) {
+    // `--shot-profile s`: the profiler report (detail mode) of `s` seconds goes into the text file.
+    profiler.setDetailed(true);
+    profiler.start();
+    await new Promise((r) => setTimeout(r, shot.profile * 1000));
+    report = profiler.stop();
+  }
+  const dataUrl = await eng.screenshot();
+  await invoke('save_screenshot', { path: shot.path, dataUrl, text: document.body.innerText + '\n' + report });
+}
+
 /** F11 / Alt+Enter toggle fullscreen (in the Tauri app WebView2 turns the element's fullscreen into the window's). */
 window.addEventListener('keydown', (e) => {
   const key = e.key === 'F11' || (e.key === 'Enter' && e.altKey);
@@ -155,6 +177,7 @@ Alpine.data('mapPanel', () => ({
       this.info = await engine.generate(seed);
       this.destroyed = 0;
       save({ seed });
+      void captureRequested(engine);
     } finally {
       this.busy = false;
     }

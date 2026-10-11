@@ -12,6 +12,7 @@
   "app": {
     "windows": [
       {
+        "create": false,
         "title": "Wargame",
         "width": 1400,
         "height": 850,

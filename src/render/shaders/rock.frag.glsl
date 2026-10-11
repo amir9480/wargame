@@ -6,6 +6,7 @@ uniform vec3 sunColor;
 uniform vec3 skyAmbient;
 uniform vec3 groundAmbient;
 uniform float snowLine;
+uniform float heightScale; // vertical scale of the mountains (1 = reference map)
 
 varying vec3 vWorldPos;
 varying float vLodDist;
@@ -36,7 +37,7 @@ void main() {
   vec2 uv = vWorldPos.xz / 8.0, dx = dFdx(uv), dy = dFdy(uv);
   float moss = up * (1.0 - smoothstep(8.0, 18.0, vWorldPos.y)) * 0.35;
   if (moss > 0.0) col = mix(col, textureGrad(tGrass, uv, dx, dy).rgb * 0.75, moss);
-  float snow = up * smoothstep(snowLine - 4.0, snowLine + 2.0, vWorldPos.y);
+  float snow = up * smoothstep(snowLine - 4.0 * heightScale, snowLine + 2.0 * heightScale, vWorldPos.y);
   if (snow > 0.0) col = mix(col, textureGrad(tSnow, uv, dx, dy).rgb, snow);
 
   col *= mix(0.6, 1.0, vBase);

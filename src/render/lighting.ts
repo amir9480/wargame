@@ -357,7 +357,10 @@ export class Lighting {
     if (!this.enabled) {
       this.env.spriteShade.spriteShadow.value = 0; // no shadow map without the post pass
       const stats = world.cull(cullCamera);
-      profiler.scope('cull', 'overlay light quads', () => world.lights.cull(cullCamera)); // the deferred volumes are not drawn here
+      profiler.scope('cull', 'overlay light quads', () => {
+        world.lights.cullOverlay(cullCamera);
+        world.lights.cull(cullCamera); // halos only: the deferred volumes are not drawn here
+      });
       // No post pass: draw into the scene target (no MSAA), grade it, then the final pass puts it on the screen.
       profiler.scope('render', 'grade LUT bake', () => this.gradeLut.bake(this.env.daylight.value));
       profiler.group('scene (HDR)', () => this.drawMain(scene, camera, world));
@@ -402,9 +405,13 @@ export class Lighting {
         world.cullShadow(this.lightCamera, cullCamera);
         // The sky dome is on its own layer, which the light camera doesn't see.
         profiler.group('shadow map', () => {
+          const quads = world.lights.fakeGroup;
+          const quadsVisible = quads.visible;
+          quads.visible = false; // overlay light pools cast nothing
           scene.overrideMaterial = this.depthMaterial;
           this.drawLayers('shadow map', scene, this.lightCamera, world, this.shadowTarget);
           scene.overrideMaterial = null;
+          quads.visible = quadsVisible;
         });
       }
       this.shadowAllocated = true;
@@ -425,8 +432,9 @@ export class Lighting {
     shade.regionR.value = region;
     shade.shadowRange.value = this.lightCamera.far - this.lightCamera.near;
 
-    // 2. Main view into the HDR target.
+    // 2. Main view into the HDR target. The overlay pools (far lights, far towns) are drawn in it too.
     const stats = world.cull(cullCamera);
+    profiler.scope('cull', 'overlay light quads', () => world.lights.cullOverlay(cullCamera));
     profiler.group('scene (HDR)', () => this.drawMain(scene, camera, world));
 
     camera.updateMatrixWorld();

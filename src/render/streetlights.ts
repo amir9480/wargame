@@ -3,6 +3,7 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { mulberry32, hash32, type Rng } from '../core/rng.ts';
 import { planParkingLights, planStreetLights, streetIds, type LampKind } from '../terrain/streetlights.ts';
 import type { Terrain } from '../terrain/generate.ts';
+import { townAt } from '../terrain/urban.ts';
 import type { Environment } from './world.ts';
 import { groupByChunk, type ChunkGrid } from './culling.ts';
 import type { LightDef, LightField, LightGroup } from './lights.ts';
@@ -42,6 +43,8 @@ export class StreetLightLayer {
   private level = -1;
   /** Chunks whose centre is farther than this from the camera draw no lamp posts (their lights and discs stay). */
   private lodDistance = 350;
+  /** Far halo discs of the lamps standing in a town (their group draws none): the city models draw them. */
+  halos: { city: number; x: number; y: number; z: number; size: number; color: THREE.Color }[] = [];
 
   constructor(env: Environment, field: LightField) {
     this.lights = field.createGroup();
@@ -79,6 +82,7 @@ export class StreetLightLayer {
       ...planParkingLights(terrain).map((s) => ({ ...s, color: lotColor(s.lot) })),
     ];
     const lights: LightDef[] = [];
+    this.halos = [];
     const m = new THREE.Matrix4();
     const q = new THREE.Quaternion();
     const up = new THREE.Vector3(0, 1, 0);
@@ -98,11 +102,16 @@ export class StreetLightLayer {
           mesh.setColorAt(n, s.color); // tints the lamp's emissive parts
           const l = style.light;
           const pos = l.pos.clone().applyMatrix4(m);
+          // Town lamps get their far halo from the town's city model (one instanced mesh per town, see cityLod.ts).
+          const city = townAt(terrain.cities, s.x, s.z);
           lights.push({
             x: pos.x, y: pos.y, z: pos.z, groundY: s.y,
             radius: l.radius, color: s.color, intensity: l.intensity,
             dir: l.dir?.clone().applyQuaternion(q), angle: l.angle,
+            noHalo: city >= 0,
+            city,
           });
+          if (city >= 0) this.halos.push({ city, x: pos.x, y: pos.y, z: pos.z, size: Math.max(1.5, l.radius * 0.12), color: s.color.clone().multiplyScalar(l.intensity) });
         });
         mesh.userData.lodMax = this.lodDistance;
         mesh.userData.lodCenter = lodCenter;
@@ -135,6 +144,7 @@ export class StreetLightLayer {
       if (child instanceof THREE.InstancedMesh) child.dispose();
       this.group.remove(child);
     }
+    this.halos = [];
     this.lights.clear();
   }
 }

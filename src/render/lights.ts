@@ -23,6 +23,7 @@
 // a dimmer (`level`) to switch it on and off without rebuilding.
 
 import * as THREE from 'three';
+import type { TownLod } from './townLod.ts';
 import { Culler, groupByChunk, type ChunkGrid } from './culling.ts';
 import lightVertex from './shaders/light.vert.glsl';
 import lightFragment from './shaders/light.frag.glsl';
@@ -38,6 +39,10 @@ import { SIGNAL_GREEN, SIGNAL_YELLOW } from '../terrain/urban.ts';
 
 /** The sphere is scaled by this beyond the light radius, so its coarse faces still enclose the light's reach. */
 const VOLUME_SCALE = 1.12;
+/** Overlap (m) of the deferred volumes and the overlay pools round their switch distance (the switch is decided by chunk centre). */
+const LIGHT_SLACK = 65; // half the dither band (LIGHT_BAND) + half a chunk diagonal: the fade is decided per light, the culling per chunk
+/** Half width (m) of the dithered cross-fade between the deferred volumes and the overlay pools. */
+const LIGHT_BAND = 15;
 /** Rays are drawn within this camera distance of their chunk. */
 const SHAFT_DISTANCE = 260;
 /** Same for the beams of a lighthouse (a little further than a lamp's: the lantern stands high). */
@@ -88,6 +93,10 @@ export interface LightDef {
   haloSize?: number;
   /** Shown only as a light ray (if it is a spot) and a far halo: no light volume, nothing is lit, no overlay pool at low quality. */
   rayOnly?: boolean;
+  /** No far halo disc from this group: something else draws it (the street lamps of a town, in its city model). */
+  noHalo?: boolean;
+  /** Town (index into Terrain.cities) the light stands in: its volumes follow the town's detail level and its pool is drawn by the town's city model once that takes over (townLod.ts). */
+  city?: number;
 }
 
 /** Per-instance [kind, period, phase, duty] of the animated lights of a chunk (see chunks/anim.glsl). */
@@ -97,6 +106,11 @@ function animAttribute(chunk: LightDef[]): THREE.InstancedBufferAttribute {
     if (l.anim) data.set([l.anim.kind === 'blink' ? 1 : 2, l.anim.period, l.anim.phase ?? 0, l.anim.duty ?? 0.2], n * 4);
   });
   return new THREE.InstancedBufferAttribute(data, 4);
+}
+
+/** Per-instance town of the lights of a mesh (chunks/townfade.glsl): town index + 1 for the detailed lights, its negative for the city model's. */
+export function townAttribute(count: number, value: number): THREE.InstancedBufferAttribute {
+  return new THREE.InstancedBufferAttribute(new Float32Array(count).fill(value), 1);
 }
 
 /** Per-instance [group, offset] of the signal lights of a chunk (see chunks/signal.glsl). */
@@ -241,13 +255,13 @@ export class LightGroup {
       ...(signals ? { signalGreen: { value: SIGNAL_GREEN }, signalYellow: { value: SIGNAL_YELLOW } } : {}),
       ...(signals || animated ? { time: field.uniforms.time } : {}),
     };
-    const view = { fogOrigin: field.uniforms.fogOrigin, gameRight: field.uniforms.gameRight, gameUp: field.uniforms.gameUp };
+    const view = { fogOrigin: field.uniforms.fogOrigin, gameRight: field.uniforms.gameRight, gameUp: field.uniforms.gameUp, townInfo: field.uniforms.townInfo, tNoise: field.uniforms.tNoise, lightSwitch: field.uniforms.lightSwitch };
     const sigDefine: Record<string, string> = { ...(signals ? { SIGNAL: '' } : {}), ...(animated ? { ANIM: '' } : {}) };
     this.reflections = field.createReflections(sigDefine, sig);
     this.material = new THREE.ShaderMaterial({
       vertexShader: lightVertex,
       fragmentShader: lightFragment,
-      defines: { VOLUME_SCALE: VOLUME_SCALE.toFixed(3), ...sigDefine },
+      defines: { VOLUME_SCALE: VOLUME_SCALE.toFixed(3), LIGHT_SWITCH: '1.0', ...sigDefine },
       uniforms: { ...field.uniforms, ...sig, level: { value: 1 } },
       transparent: true,
       depthTest: false,
@@ -262,7 +276,7 @@ export class LightGroup {
       new THREE.ShaderMaterial({
         vertexShader: fakeVertex,
         fragmentShader: fakeFragment,
-        defines: { ...defines, ...sigDefine },
+        defines: { ...defines, LIGHT_SWITCH: '-1.0', ...sigDefine },
         uniforms: { level: this.material.uniforms.level, ...field.groundUniforms, ...sig, ...view },
         transparent: true,
         depthWrite: false,
@@ -327,32 +341,72 @@ export class LightGroup {
     const q = new THREE.Quaternion();
     const scale = new THREE.Vector3();
     const color = new THREE.Color();
-    for (const [key, chunk] of groupByChunk(lights, grid)) {
-      // Lights that only show as ray + halo (`ray`) get no light volume (nothing is lit by them), only their ray and halo.
-      const lit = chunk.filter((l) => !l.rayOnly);
-      if (lit.length) {
-        const geo = this.field.volume.clone();
-        const spots = new Float32Array(lit.length * 4);
-        const mesh = new THREE.InstancedMesh(geo, this.material, lit.length);
-        lit.forEach((l, n) => {
-          m.compose(new THREE.Vector3(l.x, l.y, l.z), q, scale.setScalar(l.radius * VOLUME_SCALE));
-          mesh.setMatrixAt(n, m);
-          mesh.setColorAt(n, color.copy(l.color).multiplyScalar(l.intensity));
-          if (l.dir && l.angle !== undefined) spots.set([l.dir.x, l.dir.y, l.dir.z, Math.cos(l.angle)], n * 4);
-          else spots[n * 4 + 3] = -2;
-        });
-        geo.setAttribute('aSpot', new THREE.InstancedBufferAttribute(spots, 4));
-        if (this.signals) geo.setAttribute('aSignal', signalAttribute(lit));
-        if (this.animated) geo.setAttribute('aAnim', animAttribute(lit));
-        mesh.userData.lodCenter = grid.center(key);
-        this.meshes.push(mesh);
-        this.field.scene.add(mesh);
+    const townLod = this.field.townLod;
+    /** Lights standing in a town, per town: its city model draws their pools in one mesh once the town is far. */
+    const townLights = new Map<number, LightDef[]>();
+    for (const [key, all] of groupByChunk(lights, grid)) {
+      // A chunk's lights of one town are separate meshes: they are hidden when the town's city model takes over (townLod.ts).
+      const parts = new Map<number, LightDef[]>();
+      for (const l of all) {
+        const city = townLod && l.city !== undefined && l.city >= 0 ? l.city : -1;
+        const part = parts.get(city);
+        if (part) part.push(l);
+        else parts.set(city, [l]);
       }
-      this.buildFake(chunk, key, grid);
-      this.buildShafts(chunk, key, grid);
-      this.buildReflections(chunk, key, grid);
+      for (const [city, chunk] of parts) {
+        // Lights that only show as ray + halo (`ray`) get no light volume (nothing is lit by them), only their ray and halo.
+        const lit = chunk.filter((l) => !l.rayOnly);
+        if (lit.length) {
+          const geo = this.field.volume.clone();
+          const spots = new Float32Array(lit.length * 4);
+          const mesh = new THREE.InstancedMesh(geo, this.material, lit.length);
+          lit.forEach((l, n) => {
+            m.compose(new THREE.Vector3(l.x, l.y, l.z), q, scale.setScalar(l.radius * VOLUME_SCALE));
+            mesh.setMatrixAt(n, m);
+            mesh.setColorAt(n, color.copy(l.color).multiplyScalar(l.intensity));
+            if (l.dir && l.angle !== undefined) spots.set([l.dir.x, l.dir.y, l.dir.z, Math.cos(l.angle)], n * 4);
+            else spots[n * 4 + 3] = -2;
+          });
+          geo.setAttribute('aSpot', new THREE.InstancedBufferAttribute(spots, 4));
+          if (this.signals) geo.setAttribute('aSignal', signalAttribute(lit));
+          if (this.animated) geo.setAttribute('aAnim', animAttribute(lit));
+          if (city >= 0) geo.setAttribute('aTown', townAttribute(lit.length, city + 1));
+          mesh.userData.lodCenter = grid.center(key);
+          if (city >= 0) townLod!.tag(mesh, city);
+          this.meshes.push(mesh);
+          this.field.scene.add(mesh);
+        }
+        this.buildFake(chunk, key, grid, city);
+        this.buildShafts(chunk, key, grid);
+        this.buildReflections(chunk, key, grid);
+        if (city >= 0) {
+          const list = townLights.get(city);
+          if (list) list.push(...chunk);
+          else townLights.set(city, [...chunk]);
+        }
+      }
     }
+    for (const [city, list] of townLights) this.buildTownPools(list, city);
+    this.applyDistances();
     this.field.refresh();
+  }
+
+  /**
+   * Deferred volumes cover only the lights near the camera; the cheap overlay pools (the low-quality lighting) take over
+   * beyond `distance`. Town lights follow their town instead (tagged meshes, townLod.ts): volumes / chunk pools while the
+   * town is near, one pool mesh per town once its city model is drawn. Low quality (no deferred) draws pools everywhere.
+   */
+  applyDistances(): void {
+    const { deferred, deferredDistance } = this.field;
+    this.field.uniforms.lightSwitch.value = new THREE.Vector2(deferred ? deferredDistance : 0, LIGHT_BAND);
+    for (const mesh of this.meshes) {
+      if (mesh.userData.townCity === undefined) mesh.userData.lodMax = deferred ? deferredDistance + LIGHT_SLACK : undefined;
+    }
+    for (const mesh of this.fake) {
+      if (mesh.userData.townRole === 'model') continue; // the town's city-model pools: always beyond its switch
+      if (mesh.userData.townCity !== undefined) mesh.userData.lodMin = deferred ? Infinity : undefined; // chunk pools of town lights: only where there are no volumes
+      else mesh.userData.lodMin = deferred ? deferredDistance - LIGHT_SLACK : undefined;
+    }
   }
 
   /** One reflection streak quad per light of the chunk (see reflect.vert.glsl). */
@@ -366,26 +420,24 @@ export class LightGroup {
     this.reflections.add(spots, grid.center(key), this.signals ? { aSignal: [2, (s) => s.signal] } : {});
   }
 
-  /** One glow quad and one flat pool quad per light of the chunk (see lightfake.vert.glsl). */
-  private buildFake(chunk: LightDef[], key: number, grid: ChunkGrid): void {
+  /** One flat pool quad per light (see lightfake.vert.glsl), as one InstancedMesh. */
+  private poolMesh(lights: LightDef[], town: number): THREE.InstancedMesh {
     const none = new THREE.Quaternion();
     const m = new THREE.Matrix4();
     const color = new THREE.Color();
-    // Signal lights need their own per-instance attribute, so the shared geometries are cloned.
+    // Signal lights need their own per-instance attribute, so the shared geometry is cloned.
     const own = this.signals || this.animated;
-    const haloGeo = own ? this.field.quad.clone() : this.field.quad;
-    const poolGeo = own ? this.field.poolGrid.clone() : this.field.poolGrid;
-    if (this.signals) {
-      haloGeo.setAttribute('aSignal', signalAttribute(chunk));
-      poolGeo.setAttribute('aSignal', signalAttribute(chunk));
+    const grid = town < 0 ? this.field.poolGridFar : this.field.poolGrid; // town < 0: the city model's pools
+    let poolGeo = own ? grid.clone() : grid;
+    if (this.signals) poolGeo.setAttribute('aSignal', signalAttribute(lights));
+    if (this.animated) poolGeo.setAttribute('aAnim', animAttribute(lights));
+    // A town's pools cross-fade with the town's volumes / city model (`town` = index + 1, or its negative for the city model's).
+    if (town !== 0) {
+      if (!own) poolGeo = poolGeo.clone();
+      poolGeo.setAttribute('aTown', townAttribute(lights.length, town));
     }
-    if (this.animated) {
-      haloGeo.setAttribute('aAnim', animAttribute(chunk));
-      poolGeo.setAttribute('aAnim', animAttribute(chunk));
-    }
-    const halos = new THREE.InstancedMesh(haloGeo, this.haloMaterial, chunk.length);
-    const pools = new THREE.InstancedMesh(poolGeo, this.fakeMaterials[1], chunk.length);
-    chunk.forEach((l, n) => {
+    const pools = new THREE.InstancedMesh(poolGeo, this.fakeMaterials[1], lights.length);
+    lights.forEach((l, n) => {
       const groundY = l.groundY ?? l.y - l.radius * 0.25;
       const height = Math.max(1, l.y - groundY);
       // Where the light lands: along the spot axis down to the ground, or straight below a point light.
@@ -396,23 +448,56 @@ export class LightGroup {
         poolRadius = Math.min(l.radius * 0.6, height * Math.tan(l.angle));
       }
       color.copy(l.color).multiplyScalar(l.intensity);
-      halos.setMatrixAt(n, m.compose(new THREE.Vector3(l.x, l.y, l.z), none, new THREE.Vector3().setScalar(l.haloSize ?? Math.max(1.5, l.radius * 0.12))));
-      halos.setColorAt(n, color);
       pools.setMatrixAt(n, m.compose(pool.setY(groundY), none, new THREE.Vector3().setScalar(poolRadius * 2))); // height follows the ground in the shader
       pools.setColorAt(n, l.rayOnly ? color.setScalar(0) : color);
     });
-    halos.userData.lodCenter = grid.center(key);
-    halos.userData.noShadow = true;
-    halos.renderOrder = 2; // after roads (~0.5-1) and water, so they never paint over the discs
-    this.halos.push(halos);
-    this.field.haloGroup.add(halos);
-    for (const mesh of [pools]) {
-      mesh.userData.lodCenter = grid.center(key);
-      mesh.userData.noShadow = true;
-      mesh.renderOrder = 2;
-      this.fake.push(mesh);
-      this.field.fakeGroup.add(mesh);
+    pools.userData.noShadow = true;
+    pools.userData.ownGeometry = own || town !== 0; // cloned for this mesh: disposed with it
+    pools.renderOrder = 2;
+    return pools;
+  }
+
+  /**
+   * All pools of a town's lights in ONE mesh, drawn once the town's city model is (beyond its switch distance), at every
+   * quality: the low-quality lighting stands in for the deferred volumes there.
+   */
+  private buildTownPools(lights: LightDef[], city: number): void {
+    const pools = this.poolMesh(lights, -(city + 1));
+    this.field.townLod!.tag(pools, city, 'model');
+    this.fake.push(pools);
+    this.field.fakeGroup.add(pools);
+  }
+
+  /** One glow disc (far halo) and one flat pool quad per light of the chunk; `city` >= 0: lights of that town (see lightfake.vert.glsl). */
+  private buildFake(chunk: LightDef[], key: number, grid: ChunkGrid, city: number): void {
+    const none = new THREE.Quaternion();
+    const m = new THREE.Matrix4();
+    const color = new THREE.Color();
+    const own = this.signals || this.animated;
+    // Lights flagged `noHalo` have their far disc somewhere else (the town's city model, cityLod.ts).
+    const haloLights = chunk.filter((l) => !l.noHalo);
+    const haloGeo = own ? this.field.quad.clone() : this.field.quad;
+    if (this.signals) haloGeo.setAttribute('aSignal', signalAttribute(haloLights));
+    if (this.animated) haloGeo.setAttribute('aAnim', animAttribute(haloLights));
+    const halos = haloLights.length ? new THREE.InstancedMesh(haloGeo, this.haloMaterial, haloLights.length) : null;
+    if (!halos && own) haloGeo.dispose();
+    const pools = this.poolMesh(chunk, city >= 0 ? city + 1 : 0);
+    if (city >= 0) this.field.townLod!.tag(pools, city);
+    if (halos) {
+      haloLights.forEach((l, n) => {
+        halos.setMatrixAt(n, m.compose(new THREE.Vector3(l.x, l.y, l.z), none, new THREE.Vector3().setScalar(l.haloSize ?? Math.max(1.5, l.radius * 0.12))));
+        halos.setColorAt(n, color.copy(l.color).multiplyScalar(l.intensity));
+      });
+      halos.userData.lodCenter = grid.center(key);
+      halos.userData.lodMax = this.haloMax || undefined;
+      halos.userData.noShadow = true;
+      halos.renderOrder = 2; // after roads (~0.5-1) and water, so they never paint over the discs
+      this.halos.push(halos);
+      this.field.haloGroup.add(halos);
     }
+    pools.userData.lodCenter = grid.center(key);
+    this.fake.push(pools);
+    this.field.fakeGroup.add(pools);
   }
 
   /** One ray volume per spot light of the chunk: a sphere round the beam from the lamp along the spot axis down to the ground. */
@@ -473,7 +558,7 @@ export class LightGroup {
     for (const mesh of this.fake) {
       this.field.fakeGroup.remove(mesh);
       mesh.dispose();
-      if (this.signals || this.animated) mesh.geometry.dispose(); // cloned per chunk (shared otherwise)
+      if (mesh.userData.ownGeometry) mesh.geometry.dispose(); // cloned per mesh (shared otherwise)
     }
     this.fake = [];
     for (const mesh of this.halos) {
@@ -484,6 +569,14 @@ export class LightGroup {
     this.halos = [];
     this.field.refresh();
   }
+
+  /** Camera distance (to the chunk centre) beyond which this group's far discs are no longer drawn (0 = never). */
+  setHaloMax(distance: number): void {
+    this.haloMax = distance;
+    for (const mesh of this.halos) mesh.userData.lodMax = distance || undefined;
+  }
+
+  private haloMax = 0;
 
   /** Camera distances where the far discs start to fade in and where they are at full strength. */
   setHaloRange(start: number, end: number): void {
@@ -529,7 +622,11 @@ export class LightField {
     fogFar: { value: 1200 },
     time: { value: 0 },
     haloBokeh: { value: 0 },
+    /** Per town, two entries: (centre x, y, z, switch distance), (band half width, 0, 0, 0) (the World points this at TownLod.info; chunks/townfade.glsl). */
+    townInfo: { value: [] as THREE.Vector4[] },
     tNoise: { value: null as THREE.Texture | null },
+    /** Switch distance and band half width between the deferred volumes and the overlay pools (chunks/townfade.glsl); x = 0: no switch. */
+    lightSwitch: { value: new THREE.Vector2() },
     rayResolution: { value: new THREE.Vector2(1, 1) },
     lightResolution: { value: new THREE.Vector2(1, 1) },
   };
@@ -556,21 +653,31 @@ export class LightField {
   /** Unit quad shared by the glow overlays. */
   readonly quad = new THREE.PlaneGeometry(1, 1);
   /** Unit horizontal grid for the ground pools: the vertex shader drapes it over the terrain heights. */
-  readonly poolGrid = new THREE.PlaneGeometry(1, 1, 8, 8).rotateX(-Math.PI / 2); // 8x8 cells: the soft pools drape fine, and ~230 pools are drawn at once in towns
+  readonly poolGrid = new THREE.PlaneGeometry(1, 1, 4, 4).rotateX(-Math.PI / 2); // 4x4 cells (32 triangles): a soft pool of a few metres drapes fine on that
+  /** The pools of a town's city model (seen from far away, streets are flat): 2x2 cells, a town has a thousand lamps. */
+  readonly poolGridFar = new THREE.PlaneGeometry(1, 1, 2, 2).rotateX(-Math.PI / 2);
   /** Height texture of the rendered ground (see World), shared by the pool materials. */
   readonly groundUniforms = {
     tHeight: { value: null as THREE.Texture | null },
     mapSize: { value: 1 },
     gridSize: { value: 1 },
   };
-  private deferred = true;
+  private deferredOn = true;
+  /** Camera distance (to the chunk centre) beyond which the cheap overlay pools replace the deferred volumes. */
+  private deferredRange = 400;
+  /** Town LOD (set by the World): town lights follow their town's detail level. */
+  townLod: TownLod | null = null;
   private groups: LightGroup[] = [];
   private reflectGroups: ReflectionGroup[] = [];
   private culler = new Culler();
   private fakeCuller = new Culler();
 
-  constructor() {
-    this.fakeGroup.visible = false;
+  get deferred(): boolean {
+    return this.deferredOn;
+  }
+
+  get deferredDistance(): number {
+    return this.deferredRange;
   }
 
   /** `signals`: the group's lights are traffic signals (LightDef.signal). `animated`: its lights flash or turn (LightDef.anim). */
@@ -608,10 +715,16 @@ export class LightField {
     this.groundUniforms.gridSize.value = gridSize;
   }
 
-  /** Deferred light volumes (true) or the cheap overlay quads (false). */
+  /** Deferred light volumes for the lights near the camera (true; the overlay pools take over beyond `setDeferredDistance`), or the cheap overlay quads everywhere (false). */
   setDeferred(on: boolean): void {
-    this.deferred = on;
-    this.fakeGroup.visible = !on; // also keeps the quads out of the shadow pass
+    this.deferredOn = on;
+    for (const g of this.groups) g.applyDistances();
+  }
+
+  /** Camera distance beyond which the overlay pools replace the deferred volumes (town lights follow their town instead). */
+  setDeferredDistance(distance: number): void {
+    this.deferredRange = distance;
+    for (const g of this.groups) g.applyDistances();
   }
 
   /** Light shafts on / off (high quality). */
@@ -668,13 +781,24 @@ export class LightField {
     this.haloCuller.collect(this.haloGroup);
   }
 
-  /** Frustum / distance culling of whichever representation is in use. Returns how many chunk meshes will be drawn. */
+  /**
+   * Culls the overlay pools (drawn in the main scene, so before it): all of them in low quality, only the far ones (and the
+   * town models') with deferred lights. Returns how many will be drawn.
+   */
+  cullOverlay(camera: THREE.Camera): number {
+    this.fakeCuller.update(camera);
+    let drawn = 0;
+    for (const g of this.groups) drawn += g.applyLevel(true);
+    return drawn;
+  }
+
+  /** Frustum / distance culling of the halos and, with deferred lights, the light volumes. Returns how many volume meshes will be drawn. */
   cull(camera: THREE.Camera): number {
-    (this.deferred ? this.culler : this.fakeCuller).update(camera);
+    if (this.deferredOn) this.culler.update(camera);
     this.haloCuller.update(camera);
     for (const g of this.groups) g.applyHaloLevel();
     let drawn = 0;
-    for (const g of this.groups) drawn += g.applyLevel(!this.deferred);
+    if (this.deferredOn) for (const g of this.groups) drawn += g.applyLevel(false);
     return drawn;
   }
 }

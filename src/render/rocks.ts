@@ -84,6 +84,7 @@ export class RockLayer {
         fogNear: { value: 400 },
         fogFar: { value: 1200 },
         snowLine: { value: SNOW_LINE },
+        heightScale: { value: 1 },
         ...this.lod,
       },
     });
@@ -111,15 +112,17 @@ export class RockLayer {
   }
 
   /** Starts a new map: removes the old rocks; `add` then brings in the new ones band by band. */
-  begin(seed: number): void {
+  begin(seed: number, heightScale = 1): void {
     this.clear();
+    this.material.uniforms.heightScale.value = heightScale;
+    this.material.uniforms.snowLine.value = SNOW_LINE * heightScale;
     // Tints are cosmetic, but still seeded so a map always looks the same.
     this.rng = mulberry32(hash32(seed, 0x70c5));
   }
 
   /** Whole map at once. */
   build(terrain: Terrain, grid: ChunkGrid): void {
-    this.begin(terrain.seed);
+    this.begin(terrain.seed, terrain.heightScale);
     this.add(terrain, terrain.rocks, grid);
   }
 

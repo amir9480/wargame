@@ -3,6 +3,7 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { sampleGrid, type RoadEdge, type RoadNetwork, type RoadType, type Terrain } from '../terrain/generate.ts';
 import type { Environment, TerrainTextures } from './world.ts';
 import { splitByChunk, type ChunkGrid } from './culling.ts';
+import type { TownLod } from './townLod.ts';
 import { CROSSWALK, CURB_GAP, SIDEWALK_WIDTH, STOP_LINE, STOP_LINE_GAP, crosswalkEnds, planIntersections, townAt } from '../terrain/urban.ts';
 import roadVertex from './shaders/road.vert.glsl';
 import roadFragment from './shaders/road.frag.glsl';
@@ -49,7 +50,10 @@ export class RoadLayer {
   private townPos = { value: new THREE.Vector4() };
   private townCount = { value: 0 };
 
-  constructor(textures: TerrainTextures, env: Environment) {
+  private readonly townLod: TownLod;
+
+  constructor(textures: TerrainTextures, env: Environment, townLod: TownLod) {
+    this.townLod = townLod;
     const lighting = () => ({
       sunDir: { value: env.sunDir },
       sunColor: { value: env.sunColor },
@@ -126,15 +130,18 @@ export class RoadLayer {
       // Caps and ribbons get their own render order: chunk meshes of equal order are
       // sorted by distance, which would draw some caps over ribbons.
       buildRoadGeometry(terrain, type, ofType, offsets, crossings).forEach((geo, layer) => {
-        for (const part of splitByChunk(geo, grid)) {
+        // Triangles inside a town are separate meshes: they are hidden beyond the town's city-model distance.
+        for (const part of splitByChunk(geo, grid, (x, z) => townAt(terrain.cities, x, z))) {
           const mesh = new THREE.Mesh(part, this.roadMats[type]);
           // After terrain, before water; asphalt over dirt where they meet.
           mesh.renderOrder = 0.5 + order * 0.1 + layer * 0.01;
+          this.townLod.tag(mesh, part.userData.group);
           this.group.add(mesh);
           if (type !== 'asphalt') continue;
           // Pavement over all the shoulders, so joins read as one surface.
           const pavement = new THREE.Mesh(part, this.pavementMat);
           pavement.renderOrder = mesh.renderOrder + 0.05;
+          this.townLod.tag(pavement, part.userData.group);
           this.group.add(pavement);
         }
         geo.dispose();

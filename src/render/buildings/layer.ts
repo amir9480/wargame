@@ -10,7 +10,9 @@ import { hash32 } from '../../core/rng.ts';
 import { BuildingState, buildingSpec, type Building } from '../../terrain/generate.ts';
 import type { Environment } from '../world.ts';
 import { groupByChunk, type ChunkGrid } from '../culling.ts';
-import type { LightDef, LightField, LightGroup, ReflectionGroup, ReflectSpot } from '../lights.ts';
+import { townAttribute, type LightDef, type LightField, type LightGroup, type ReflectionGroup, type ReflectSpot } from '../lights.ts';
+import type { TownLod } from '../townLod.ts';
+import type { CityLodLayer } from '../cityLod.ts';
 import { CRANE_APEX_BEACON, CRANE_JIB_BEACON, MeshData, buildFar, buildNear, buildRubble, glowSpots, haloSpots, toWorld, windowSeed, type Span } from './geometry.ts';
 import nearVertex from '../shaders/building.vert.glsl';
 import nearFragment from '../shaders/building.frag.glsl';
@@ -19,9 +21,12 @@ import farFragment from '../shaders/buildingFar.frag.glsl';
 import haloVertex from '../shaders/buildingHalo.vert.glsl';
 import haloFragment from '../shaders/lighthalo.frag.glsl';
 
+/** Chunk keys stay below this, so `chunk + (town + 1) * TOWN_KEY` is a unique key per chunk and town (-1 = not in a town). */
+const TOWN_KEY = 1 << 20;
+
 /** Window lights switch on as the sky darkens (same curve as the street lights). */
 /** Half the diagonal of a map chunk (m): the near / far switch is decided by chunk centre, so a far pixel can be this much nearer than the switch distance. */
-const CHUNK_HALF_DIAGONAL = 46;
+export const CHUNK_HALF_DIAGONAL = 46;
 const ON_DAYLIGHT = 0.65;
 const OFF_DAYLIGHT = 0.25;
 /** Window halo colour (linear) and disc size (m). */
@@ -91,8 +96,13 @@ export class BuildingLayer {
   /** Destroyed bits of the current map's buildings (null before its buildings arrive). */
   state: BuildingState | null = null;
 
-  constructor(env: Environment, field: LightField) {
+  private readonly townLod: TownLod;
+  private readonly cityModels: CityLodLayer;
+
+  constructor(env: Environment, field: LightField, townLod: TownLod, cityModels: CityLodLayer) {
     this.field = field;
+    this.townLod = townLod;
+    this.cityModels = cityModels;
     this.lights = field.createGroup();
     this.beacons = field.createGroup(false, true);
     this.reflections = field.createReflections({ WINDOW: '' }, { hour: env.hour });
@@ -116,8 +126,9 @@ export class BuildingLayer {
       fragmentShader: haloFragment,
       uniforms: {
         level: { value: 0 }, haloStart: { value: 0 }, haloEnd: { value: 1 }, hour: env.hour, time: field.uniforms.time, haloBokeh: field.uniforms.haloBokeh,
-        fogOrigin: field.uniforms.fogOrigin, gameRight: field.uniforms.gameRight, gameUp: field.uniforms.gameUp,
+        fogOrigin: field.uniforms.fogOrigin, gameRight: field.uniforms.gameRight, gameUp: field.uniforms.gameUp, townInfo: field.uniforms.townInfo, tNoise: field.uniforms.tNoise,
       },
+      defines: { TOWN_FADE: '' }, // dithered cross-fade with the city model's halos
       transparent: true,
       depthWrite: false,
       side: THREE.DoubleSide,
@@ -143,7 +154,18 @@ export class BuildingLayer {
     this.buildings = buildings;
     this.grid = grid;
     this.setState(new BuildingState(buildings.length));
-    return [...groupByChunk(buildings, grid)].map(([key, list]) => ({ key, at: grid.center(key), run: () => this.buildChunk(key, list) }));
+    // A chunk's town buildings (per town) get their own meshes: those are hidden beyond the town's city-model distance.
+    const jobs: { key: number; at: THREE.Vector3; run: () => void }[] = [];
+    for (const [key, list] of groupByChunk(buildings, grid)) {
+      const byTown = new Map<number, Building[]>();
+      for (const b of list) {
+        const part = byTown.get(b.city);
+        if (part) part.push(b);
+        else byTown.set(b.city, [b]);
+      }
+      for (const [city, part] of byTown) jobs.push({ key: key + (city + 1) * TOWN_KEY, at: grid.center(key), run: () => this.buildChunk(key, part, city) });
+    }
+    return jobs;
   }
 
   /** Follows another state object (e.g. one kept in sync over the network); applies its bits at once. */
@@ -154,7 +176,8 @@ export class BuildingLayer {
     for (const b of this.buildings) this.apply(b.id, state.isDestroyed(b.id));
   }
 
-  private buildChunk(key: number, list: Building[]): void {
+  private buildChunk(key: number, list: Building[], city: number): void {
+    const chunkKey = key + (city + 1) * TOWN_KEY;
     const grid = this.grid!;
     const near = new MeshData({ aWin: 2, aKey: 4 });
     const far = new MeshData({ aFacade: 4, aGrid: 4, aCols: 4, aDoor: 4, aSeed: 1, aGlass: 3 });
@@ -217,6 +240,7 @@ export class BuildingLayer {
       const quad = this.quad.clone();
       quad.setAttribute('aHalo', new THREE.InstancedBufferAttribute(new Float32Array(halos.flatMap((h) => h.key)), 4));
       quad.setAttribute('aHaloShare', new THREE.InstancedBufferAttribute(new Float32Array(halos.map((h) => h.share)), 1));
+      if (city >= 0) quad.setAttribute('aTown', townAttribute(halos.length, city + 1)); // cross-fades with the city model's halos
       haloMesh = new THREE.InstancedMesh(quad, this.haloMaterial, halos.length);
       halos.forEach((h, i) => {
         haloMesh!.setMatrixAt(i, h.m);
@@ -239,9 +263,12 @@ export class BuildingLayer {
       farBase: (farMesh.geometry.attributes.position.array as Float32Array).slice(),
       spans,
     };
-    const old = this.chunks.get(key);
+    // Town content: hidden once the town's city model takes over (the near mesh is long gone by then).
+    this.townLod.tag(farMesh, city);
+    if (haloMesh) this.townLod.tag(haloMesh, city);
+    const old = this.chunks.get(chunkKey);
     if (old) this.dispose(old);
-    this.chunks.set(key, chunk);
+    this.chunks.set(chunkKey, chunk);
     this.group.add(nearMesh, farMesh);
     for (const b of list) {
       this.chunkOf.set(b.id, chunk);
@@ -277,7 +304,7 @@ export class BuildingLayer {
       for (const l of spec.lights) {
         const [x, y, z] = toWorld(b, [l.x, l.y, l.z]);
         defs.push({
-          x, y, z, groundY: b.y, radius: l.radius, intensity: 1.6,
+          x, y, z, groundY: b.y, radius: l.radius, intensity: 1.6, city: b.city,
           color: new THREE.Color(l.color),
           dir: new THREE.Vector3(0, -1, 0), angle: THREE.MathUtils.degToRad(70),
         });
@@ -302,6 +329,7 @@ export class BuildingLayer {
     show(chunk.far, chunk.farBase, s.farRubble, destroyed);
     showInstances(chunk.halos, s.halos, !destroyed);
     showInstances(chunk.reflections, s.reflections, !destroyed);
+    this.cityModels.setDestroyed(id, destroyed);
     const b = this.buildings[id];
     if (this.lightsBuilt && b && ((b.type === 'gas' && b.condition === 'intact') || b.crane)) this.buildLights();
   }
@@ -365,7 +393,7 @@ export class BuildingLayer {
 }
 
 /** Restores a building's instances (visible) or zeroes their scale (hidden; the shaders skip them). */
-function showInstances(mesh: THREE.InstancedMesh | null, { index, matrices }: Instances, visible: boolean): void {
+export function showInstances(mesh: THREE.InstancedMesh | null, { index, matrices }: Instances, visible: boolean): void {
   if (!mesh || !index.length) return;
   const zero = new THREE.Matrix4().makeScale(0, 0, 0);
   index.forEach((i, n) => mesh.setMatrixAt(i, visible ? matrices[n] : zero));
@@ -373,7 +401,7 @@ function showInstances(mesh: THREE.InstancedMesh | null, { index, matrices }: In
 }
 
 /** Restores a vertex range (visible) or collapses it onto its first vertex (hidden: degenerate triangles). */
-function show(mesh: THREE.Mesh, base: Float32Array, { start, count }: Span, visible: boolean): void {
+export function show(mesh: THREE.Mesh, base: Float32Array, { start, count }: Span, visible: boolean): void {
   if (!count) return;
   const attr = mesh.geometry.attributes.position as THREE.BufferAttribute;
   const arr = attr.array as Float32Array;

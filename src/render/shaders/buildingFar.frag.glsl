@@ -31,7 +31,18 @@ uniform float time; // seconds on the shared render clock
 #include ./chunks/windows.glsl;
 #include ./chunks/twinkle.glsl;
 
+#ifdef CITY_FADE
+// A town's city model (render/cityLod.ts): cross-fades in with the detailed content over the band round the switch distance,
+// measured to the town centre (lodSwitch / lodBias are this town's), each pixel kept where the blue noise is below the share.
+uniform vec3 townCenter;
+#include ./chunks/lodfade.glsl;
+#endif
+
 void main() {
+#ifdef CITY_FADE
+  float modelShare = 1.0 - lodNearShare(distance(fogOrigin, townCenter));
+  if (modelShare < 1.0 && lodNoise() >= modelShare) discard;
+#endif
   vec3 n = normalize(vNormal);
   float ndl = max(dot(n, sunDir), 0.0);
   vec3 ambient = mix(groundAmbient, skyAmbient, n.y * 0.5 + 0.5);

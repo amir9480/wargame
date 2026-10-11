@@ -30,6 +30,8 @@ export interface RockOptions {
   blocked?: Uint8Array;
   /** River cells (non-zero = river): rivers get extra rocks in the bed and on the banks. */
   riverMask?: Uint8Array;
+  /** Vertical scale of the mountains (Terrain.heightScale): the snow line, and so the rock-free height, scales with it. */
+  heightScale?: number;
 }
 
 /** Ground below this is water, river bed or wet shore: no rocks. */
@@ -54,7 +56,7 @@ export function scatterRocks(
  * Rows must be scanned in order (top to bottom): the random stream runs row by row.
  */
 export function rockScatter(
-  heights: Float32Array, N: number, cell: number, rng: Rng, noise: Noise2D, { density = 1, blocked, riverMask }: RockOptions = {},
+  heights: Float32Array, N: number, cell: number, rng: Rng, noise: Noise2D, { density = 1, blocked, riverMask, heightScale = 1 }: RockOptions = {},
 ): (j0: number, j1: number) => Rock[] {
   const slope = slopeField(heights, N, cell);
 
@@ -87,7 +89,7 @@ export function rockScatter(
       if (size > MAX_RIVER_ROCK) return false;
     }
     // No rocks on or under snow: the whole boulder (ground + its size) stays below where snow can start.
-    if (y + size > SNOW_LINE - SNOW_MARGIN) return false;
+    if (y + size > (SNOW_LINE - SNOW_MARGIN) * heightScale) return false;
     if (slope[k] > MAX_SLOPE || blocked?.[k]) return false;
     rocks.push({
       x: gx * cell - half,

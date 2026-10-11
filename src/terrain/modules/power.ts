@@ -14,6 +14,7 @@
 
 import type { Rng } from '../../core/rng.ts';
 import { hash32 } from '../../core/rng.ts';
+import { linearScale } from '../scale.ts';
 import { sampleGrid, slopeField } from '../grid.ts';
 import { townAt, TOWN_REACH } from '../urban.ts';
 import type { Building, City } from '../buildings/types.ts';
@@ -187,7 +188,7 @@ const EDGE_INSET = 6;
 /** Ground height (m) a site pad must at least have (not on the beach). */
 const MIN_HEIGHT = 1.2;
 /** Where a plant is preferably put: cells from the city it serves. */
-const PLANT_DISTANCE = 110;
+const PLANT_DISTANCE = 110; // cells from its city on the reference map (grows with the city: see linearScale)
 /** Chance of a plant on a map without a city; of a second plant on a map with two cities. */
 const PLANT_NO_CITY = 0.5;
 const PLANT_SECOND = 0.4;
@@ -321,6 +322,7 @@ export function placePower(input: PowerInput, rng: Rng): PowerResult {
   const clearing = new Uint8Array(N * N);
   const grid: PowerGrid = { sites: [], lines: [], poles: [], links: [] };
 
+  const plantDistance = PLANT_DISTANCE * linearScale(play.i1 - play.i0 + 1);
   const wantPlants = cities.length ? 1 + (cities.length > 1 && rng() < PLANT_SECOND ? 1 : 0) : rng() < PLANT_NO_CITY ? 1 : 0;
   if (!wantPlants) {
     // No plant: the roads still carry poles, fed from outside the map (see planPoles).
@@ -336,6 +338,41 @@ export function placePower(input: PowerInput, rng: Rng): PowerResult {
   const worldOf = (c: number) => c * cell - half;
   /** Every 3rd point of the drivable roads (the substations face the nearest one). */
   const roadPoints = roads.edges.filter((e) => e.type !== 'rail').flatMap((e) => e.points.filter((_, n) => n % 3 === 0));
+  // Nearest road point queries run per candidate cell: bucket the points (exact result, ties go to the earliest point as in a linear scan).
+  const BUCKET = 64;
+  const buckets = new Map<number, number[]>();
+  const bucketKey = (bx: number, bz: number) => bx * 65536 + bz;
+  roadPoints.forEach((p, n) => {
+    const key = bucketKey(Math.floor(p.x / BUCKET), Math.floor(p.z / BUCKET));
+    const list = buckets.get(key);
+    if (list) list.push(n);
+    else buckets.set(key, [n]);
+  });
+  const reachBuckets = Math.ceil(((N - 1) * cell) / BUCKET) + 2;
+  const nearestRoadPoint = (wx: number, wz: number): { x: number; z: number } | null => {
+    if (!roadPoints.length) return null;
+    const bx = Math.floor(wx / BUCKET), bz = Math.floor(wz / BUCKET);
+    let best = -1, bestD = Infinity;
+    for (let r = 0; r <= reachBuckets; r++) {
+      // Everything in ring r is at least (r - 1) * BUCKET away: stop once the best found is closer than that.
+      if (best >= 0 && bestD < (r - 1) * BUCKET) break;
+      for (let dx = -r; dx <= r; dx++) {
+        for (let dz = -r; dz <= r; dz++) {
+          if (Math.max(Math.abs(dx), Math.abs(dz)) !== r) continue;
+          const list = buckets.get(bucketKey(bx + dx, bz + dz));
+          if (!list) continue;
+          for (const n of list) {
+            const d = Math.hypot(roadPoints[n].x - wx, roadPoints[n].z - wz);
+            if (d < bestD || (d === bestD && n < best)) {
+              bestD = d;
+              best = n;
+            }
+          }
+        }
+      }
+    }
+    return best >= 0 ? roadPoints[best] : null;
+  };
 
   /** Pad rectangle in cells (half extents) of a site of this kind, scaled by `scale`, turned by `yaw`. */
   const footprint = (kind: PowerSiteKind, yaw: number, scale: number) => {
@@ -358,8 +395,13 @@ export function placePower(input: PowerInput, rng: Rng): PowerResult {
       for (const limit of SLOPE_TIERS) {
         const blocked = countTable(N, (k) => taken[k] > 0 || riverMask[k] > 0 || streamMask[k] > 0 || heights[k] < MIN_HEIGHT || mountain[k] > (limit > 0.3 ? 8 : 2.5) || slope[k] > limit);
         let best: (Cell & { yaw: number; scale: number }) | null = null, bestScore = -Infinity;
+        // The yaw (a nearest-road search) is only worth computing where the smaller of the two pad orientations fits at all.
+        const upright = footprint(kind, 0, scale), turned = footprint(kind, Math.PI / 2, scale);
+        const minMx = Math.min(upright.hx, turned.hx) + SITE_MARGIN, minMz = Math.min(upright.hz, turned.hz) + SITE_MARGIN;
         for (let j = play.j0 + EDGE_INSET; j <= play.j1 - EDGE_INSET; j += 2) {
           for (let i = play.i0 + EDGE_INSET; i <= play.i1 - EDGE_INSET; i += 2) {
+            if (i - minMx < play.i0 + 2 || j - minMz < play.j0 + 2 || i + minMx > play.i1 - 2 || j + minMz > play.j1 - 2) continue;
+            if (blocked(i - minMx, j - minMz, i + minMx, j + minMz)) continue;
             const yaw = facing(i, j);
             const { hx, hz } = footprint(kind, yaw, scale);
             const mx = hx + SITE_MARGIN, mz = hz + SITE_MARGIN;
@@ -429,7 +471,7 @@ export function placePower(input: PowerInput, rng: Rng): PowerResult {
       const d = Math.hypot(i - cx, j - cz);
       const toBase = bases.reduce((m, b) => Math.min(m, Math.hypot(i - cellOf(b.x), j - cellOf(b.z))), 1e9);
       const road = roadDist[j * N + i] < 40 ? 0.1 : 0; // a road not far off
-      return (city ? -Math.abs(d - PLANT_DISTANCE) / PLANT_DISTANCE : -d / 200) + road + Math.min(toBase, 60) / 400 + rng() * 0.15;
+      return (city ? -Math.abs(d - plantDistance) / plantDistance : -d / 200) + road + Math.min(toBase, 60) / 400 + rng() * 0.15;
     };
     const spot = findSite('plant', (i, j) => quarterYaw(cx - i, cz - j), score);
     if (spot) addSite('plant', spot, city ? city.id : -1);
@@ -452,15 +494,8 @@ export function placePower(input: PowerInput, rng: Rng): PowerResult {
     // Faces the nearest road.
     const facing = (i: number, j: number) => {
       const wx = worldOf(i), wz = worldOf(j);
-      let nearest = Infinity, yaw = quarterYaw(ccx - i, ccz - j);
-      for (const p of roadPoints) {
-        const d = Math.hypot(p.x - wx, p.z - wz);
-        if (d < nearest) {
-          nearest = d;
-          yaw = quarterYaw(p.x - wx, p.z - wz);
-        }
-      }
-      return yaw;
+      const p = nearestRoadPoint(wx, wz);
+      return p ? quarterYaw(p.x - wx, p.z - wz) : quarterYaw(ccx - i, ccz - j);
     };
     const spot = findSite('substation', facing, score);
     if (spot) addSite('substation', spot, city.id);

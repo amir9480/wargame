@@ -14,8 +14,9 @@ import { profiler } from './core/profiler.ts';
 import { GpuTimer } from './render/gpuTimer.ts';
 import { DynamicResolution } from './render/dynamicResolution.ts';
 
-export const MAP_SIZE = 640;
-export const MAP_CELL = 2;
+// Map size comes from the one scale constant (terrain/scale.ts: MAP_SCALE).
+export { MAP_CELL, MAP_SIZE } from './terrain/scale.ts';
+import { MAP_CELL, MAP_SIZE } from './terrain/scale.ts';
 
 const TEXTURE_BASE = `${import.meta.env.BASE_URL}assets/textures/`;
 /** Main-thread time per frame spent building map meshes while a map streams in (ms). */
@@ -276,6 +277,7 @@ export class Engine {
   }
   set debugView(view: DebugView) {
     if (this.lighting) this.lighting.debugView = view;
+    this.world?.setLodDebug(view === 'lod');
   }
 
   private applyQuality(): void {
@@ -425,6 +427,15 @@ export class Engine {
     this.lighting?.resize();
   }
 
+  private screenshotCallback: ((dataUrl: string) => void) | null = null;
+
+  /** Resolves with the next finished frame as a PNG data URL. */
+  screenshot(): Promise<string> {
+    return new Promise((resolve) => {
+      this.screenshotCallback = resolve;
+    });
+  }
+
   private frameLoop(): (time: number) => void {
     let frames = 0;
     let acc = 0;
@@ -466,6 +477,13 @@ export class Engine {
         }
       }
       profiler.endFrame();
+
+      // Screenshot request (command line capture in the Tauri app): the drawing buffer is only valid right after the draw.
+      if (this.screenshotCallback) {
+        const done = this.screenshotCallback;
+        this.screenshotCallback = null;
+        done(this.renderer.domElement.toDataURL('image/png'));
+      }
 
       // Dynamic resolution: wall time of this frame (clamped dt would hide stalls) and the main-thread share of it.
       const cpuMs = performance.now() - frameStart;

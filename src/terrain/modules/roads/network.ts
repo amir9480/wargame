@@ -30,9 +30,22 @@ import type { BaseSite, CityStreets, GridEdge, GridNode, RoadContext } from './c
 import { smoothPath } from './shape.ts';
 import { MAX_EXITS, approachPoints, routeStart, type ExitSite } from './sites.ts';
 import { TOWN_REACH } from '../../urban.ts';
+import { areaScale } from '../../scale.ts';
 import {
   RAIL_BASE_MARGIN, RAIL_CROSS_COS, RAIL_MAX_GRADE, RAIL_MIN_RADIUS, RAIL_NODE_CLEARANCE, RAIL_ROAD_COST, type RailPlan,
 } from './rail.ts';
+
+/** Rural web (bigger maps): places per unit of extra area (area relative to the reference map minus 1), their least spacing as a share of the map side, margin from the play area edge (cells), asphalt share, and the cost of following an existing road on a long link. */
+const WEB_SITES_PER_AREA = 5;
+const WEB_GAP = 0.1;
+const WEB_EDGE = 12;
+const WEB_ASPHALT = 0.3;
+const WEB_REUSE = 0.7;
+
+/** Number of rural web places on a map whose play area is `span` cells wide (0 up to the reference map). */
+function webSiteCount(span: number): number {
+  return Math.round(WEB_SITES_PER_AREA * (areaScale(span) - 1));
+}
 
 /** Chance the base ring roads are asphalt; exit and crossing roads are dirt. */
 export const ASPHALT_CHANCE = 0.4;
@@ -230,6 +243,9 @@ export function growNetwork(
     rasterize();
   }
 
+  // 3b. Bigger maps: a web of rural roads between far apart places (none on the reference map or smaller).
+  buildWeb(webSiteCount(ctx.play.i1 - ctx.play.i0 + 1));
+
   // 4. Any piece of road cut off from the rest is joined to the main network.
   for (let tries = 0; tries < 8; tries++) {
     const comp = components();
@@ -292,14 +308,14 @@ export function growNetwork(
    * the stretches off existing road become new edges, joined where they meet a road.
    * With `avoidBases` it may not pass through any other base. False if no route.
    */
-  function route(a: number, b: number, type: RoadType, avoidBases: boolean): boolean {
+  function route(a: number, b: number, type: RoadType, avoidBases: boolean, reuseCost = REUSE): boolean {
     const A = nodes[a], B = nodes[b];
     const goal = cellAt(B.x, B.y);
     const reuse = (x: number, y: number, d: boolean): number => {
       if (y === goal) return cost(x, y, d);
       if (avoidBases && baseAt[y] >= 0 && baseAt[y] !== a && baseAt[y] !== b) return Infinity;
       // On existing road: cheap where junctions are allowed, never next to water/bridges.
-      if (owner[y] >= 0) return onNetwork(y) ? (d ? Math.SQRT2 : 1) * REUSE : Infinity;
+      if (owner[y] >= 0) return onNetwork(y) ? (d ? Math.SQRT2 : 1) * reuseCost : Infinity;
       return cost(x, y, d);
     };
     const path = findPath({
@@ -309,7 +325,7 @@ export function growNetwork(
       isGoal: (c) => c === goal,
       heuristic: (c) => {
         const dx = Math.abs((c % N) - B.x), dy = Math.abs(Math.floor(c / N) - B.y);
-        return (Math.max(dx, dy) + (Math.SQRT2 - 1) * Math.min(dx, dy)) * REUSE; // admissible
+        return (Math.max(dx, dy) + (Math.SQRT2 - 1) * Math.min(dx, dy)) * reuseCost; // admissible
       },
     });
     if (!path) return false;
@@ -350,6 +366,51 @@ export function growNetwork(
       rasterize();
     }
     return true;
+  }
+
+  /**
+   * Rural web for maps bigger than the reference: `count` places on dry, gentle land away from towns, bases and roads, each
+   * joined to the nearest road node (a spur, along existing road where that is cheaper) and to a far away road node, so long
+   * roads cross the countryside and join each other (junctions where a route meets a road; two-road junctions dissolve into
+   * one long road later). Asphalt on a share of them, otherwise dirt.
+   */
+  function buildWeb(count: number): void {
+    if (count <= 0) return;
+    const span = ctx.play.i1 - ctx.play.i0 + 1;
+    const gap = span * WEB_GAP;
+    const sites: GridPoint[] = [];
+    const roadNear = (x: number, y: number, r: number): boolean => {
+      for (let a = 0; a < 8; a++)
+        for (const q of [r * 0.5, r]) {
+          const cx = Math.round(x + Math.cos((a * Math.PI) / 4) * q), cy = Math.round(y + Math.sin((a * Math.PI) / 4) * q);
+          if (cx >= 0 && cy >= 0 && cx < N && cy < N && owner[cy * N + cx] >= 0) return true;
+        }
+      return false;
+    };
+    for (let tries = 0; tries < count * 80 && sites.length < count; tries++) {
+      const x = ctx.play.i0 + WEB_EDGE + Math.floor(rng() * (span - 2 * WEB_EDGE));
+      const y = ctx.play.j0 + WEB_EDGE + Math.floor(rng() * (span - 2 * WEB_EDGE));
+      const k = y * N + x;
+      if (ctx.heights[k] < WATER_LEVEL + 2 || ctx.slope[k] > 0.1 || ctx.mountain[k] > 1 || ctx.nearRiver[k] || ctx.keep[k] || owner[k] >= 0) continue;
+      if (!dryAround(ctx, [x, y]) || cities.some((c) => Math.hypot(x - c.x, y - c.y) < c.radius * TOWN_REACH + 20)) continue;
+      if (sites.some((s) => Math.hypot(s.x - x, s.y - y) < gap) || nodes.some((n) => n.edges.length && Math.hypot(n.x - x, n.y - y) < gap * 0.5)) continue;
+      if (roadNear(x, y, gap * 0.4)) continue;
+      sites.push({ x, y });
+    }
+    for (const s of sites) {
+      const type: RoadType = rng() < WEB_ASPHALT ? 'asphalt' : 'dirt';
+      const far = rng();
+      const ranked = nodes
+        .filter((n) => n.edges.length)
+        .map((n) => ({ n, d: Math.hypot(n.x - s.x, n.y - s.y) }))
+        .sort((p, q) => p.d - q.d);
+      if (!ranked.length) break;
+      const id = addNode(s.x, s.y, 'junction');
+      // Spur to the nearest road node, then a long link to one far away (random among those 30% - 75% of the map off).
+      if (!route(id, ranked[0].n.id, type, false)) continue;
+      const distant = ranked.filter((r) => r.d > span * 0.3 && r.d < span * 0.75 && r.n.id !== ranked[0].n.id);
+      if (distant.length) route(id, distant[Math.floor(far * distant.length)].n.id, type, false, WEB_REUSE);
+    }
   }
 
   /** Connected-component label per node (union-find over edges). */

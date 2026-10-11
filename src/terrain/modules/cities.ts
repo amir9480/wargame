@@ -4,6 +4,7 @@
 // lays the streets first, so the base ring roads run through the cities; the buildings module fills the blocks.
 
 import type { Rng } from '../../core/rng.ts';
+import { linearScale } from '../scale.ts';
 import { createNoise2D, lerp, smoothstep } from '../../core/noise.ts';
 import { boxBlur, slopeField } from '../grid.ts';
 import { WATER_LEVEL, type PlayArea, type Point } from '../types.ts';
@@ -75,6 +76,8 @@ export function placeCities(input: CityInput, rng: Rng): CityResult {
   const roll = rng();
   const count = roll < NO_CITY ? 0 : roll < NO_CITY + ONE_CITY ? 1 : 2;
   const noise = createNoise2D(rng);
+  // Cities grow with the map (radius, so area, by the map scale); how many there are does not.
+  const citySize = linearScale(play.i1 - play.i0 + 1);
   if (!count || !bases.length) return result;
 
   const slope = slopeField(heights, N, cell);
@@ -94,7 +97,7 @@ export function placeCities(input: CityInput, rng: Rng): CityResult {
 
   for (let c = 0; c < count; c++) {
     // Every random value is drawn whatever happens next, so the stream stays aligned.
-    const fullR = MIN_RADIUS + rng() * (MAX_RADIUS - MIN_RADIUS);
+    const fullR = (MIN_RADIUS + rng() * (MAX_RADIUS - MIN_RADIUS)) * citySize;
     const angle = rng() * (Math.PI / 2);
     const blockSize = MIN_BLOCK + rng() * (MAX_BLOCK - MIN_BLOCK);
     const offU = (rng() - 0.5) * blockSize, offV = (rng() - 0.5) * blockSize;

@@ -20,6 +20,7 @@
 
 import { createNoise2D } from '../../core/noise.ts';
 import { STAGE, stageRng } from '../seeds.ts';
+import { linearScale } from '../scale.ts';
 import { blur } from '../grid.ts';
 import { pickSeaSides } from '../modules/sea.ts';
 import { pickEdgeRanges } from '../modules/ranges.ts';
@@ -67,6 +68,7 @@ const layout: GenStage = {
         play,
         playSize: (size - 1) * cell,
         waterLevel: WATER_LEVEL,
+        heightScale: linearScale(ctx.span),
         seaSides: ctx.seaSides.map((s) => s.side),
         mountainSides: ctx.ranges.map((r) => r.side),
       },
@@ -168,7 +170,7 @@ const buildings: GenStage = {
     const { N, cell, heights, riverMask, roadMask, roadLevel, mountain, bases, roads, citySites, cityMask } = ctx;
     const rng = stageRng(ctx.seed, STAGE.buildings);
     const result = placeBuildings(
-      { N, cell, heights, riverMask, roadMask, roadLevel, mountain, bases, roads, cities: citySites, cityMask },
+      { N, cell, heights, riverMask, roadMask, roadLevel, mountain, bases, roads, cities: citySites, cityMask, size: ctx.size },
       rng,
       createNoise2D(rng),
     );
@@ -234,7 +236,7 @@ const rocks: GenStage = {
   name: 'rocks',
   *run(ctx) {
     const rockRng = stageRng(ctx.seed, STAGE.rocks);
-    const scan = rockScatter(ctx.heights, ctx.N, ctx.cell, rockRng, createNoise2D(rockRng), { blocked: ctx.clear, riverMask: ctx.riverMask });
+    const scan = rockScatter(ctx.heights, ctx.N, ctx.cell, rockRng, createNoise2D(rockRng), { blocked: ctx.clear, riverMask: ctx.riverMask, heightScale: linearScale(ctx.span) });
     ctx.rocks = [];
     for (const [j0, j1] of bands(ctx)) {
       const band = scan(j0, j1);

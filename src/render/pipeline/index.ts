@@ -104,11 +104,11 @@ export class RenderPipeline {
       landRatio: 0,
     };
     const grid = new ChunkGrid(map.worldSize, map.cell);
-    const { ground, rocks, trees, roads, bases, streetLights, buildings, urban, landmarks, power, particles, lights } = this.layers;
+    const { ground, rocks, trees, roads, bases, streetLights, buildings, urban, landmarks, power, particles, cityModels, lights } = this.layers;
     this.queue.clear();
     lights.setWetMask(null, 1); // no reflections until the new map's mask is built
     ground.begin(map, grid);
-    rocks.begin(map.seed);
+    rocks.begin(map.seed, map.heightScale);
     trees.begin(map.seed);
     roads.clear();
     bases.clear();
@@ -118,6 +118,7 @@ export class RenderPipeline {
     landmarks.clear();
     power.clear();
     particles.clear();
+    cityModels.clear();
     particles.setWind(hash32(map.seed, 0x91d) / 4294967296 * Math.PI * 2, 2.5 + (hash32(map.seed, 0x91e) % 100) / 40);
 
     this.resolveBuilt(); // an abandoned map counts as done for whoever waited on it

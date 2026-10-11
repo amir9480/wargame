@@ -22,6 +22,8 @@ import type { UrbanLayer } from '../urban.ts';
 import type { LandmarkLayer } from '../landmarks.ts';
 import type { PowerLayer } from '../power.ts';
 import type { ParticleSystem } from '../particles/system.ts';
+import type { TownLod } from '../townLod.ts';
+import type { CityLodLayer } from '../cityLod.ts';
 import { collectEmitters } from '../particles/sources.ts';
 import type { LightField } from '../lights.ts';
 import { buildWetMask } from '../wetmask.ts';
@@ -42,6 +44,8 @@ export interface RenderLayers {
   landmarks: LandmarkLayer;
   power: PowerLayer;
   particles: ParticleSystem;
+  townLod: TownLod;
+  cityModels: CityLodLayer;
   lights: LightField;
 }
 
@@ -82,6 +86,7 @@ export const RENDER_STAGES: Handlers = {
 
   cities({ cities }, ctx) {
     ctx.map.cities = cities;
+    ctx.layers.townLod.setCities(cities); // before the town content that gets tagged with its town (roads, buildings, urban)
   },
 
   buildings({ buildings, parking }, ctx) {
@@ -134,7 +139,14 @@ export const RENDER_STAGES: Handlers = {
   done({ terrain }, ctx) {
     // The streamed fields already match; take the rest (mountain field, land ratio...). The live heightmap stays.
     Object.assign(ctx.map, { ...terrain, heights: ctx.map.heights });
-    ctx.queue.add('lights', { rank: RANK.lights, run: () => ctx.layers.streetLights.build(ctx.map, ctx.grid) });
+    ctx.queue.add('lights', {
+      rank: RANK.lights,
+      run: () => {
+        ctx.layers.streetLights.build(ctx.map, ctx.grid);
+        // The towns' far models need the lamps (their halos) and the buildings' destroyed bits.
+        ctx.layers.cityModels.build(ctx.map, ctx.layers.streetLights.halos, ctx.layers.buildings.state);
+      },
+    });
     ctx.queue.add('urban', { rank: RANK.lights, run: () => ctx.layers.urban.build(ctx.map, ctx.grid) });
     ctx.queue.add('particles', { rank: RANK.lights, run: () => ctx.layers.particles.build(collectEmitters(ctx.map), ctx.grid) });
     ctx.queue.add('wetmask', { rank: RANK.lights, run: () => ctx.layers.lights.setWetMask(buildWetMask(ctx.map), ctx.map.worldSize) });

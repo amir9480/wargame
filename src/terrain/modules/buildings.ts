@@ -9,6 +9,7 @@ import { hash32, type Rng } from '../../core/rng.ts';
 import { lerp, smoothstep, type Noise2D } from '../../core/noise.ts';
 import { boxBlur } from '../grid.ts';
 import { WATER_LEVEL } from '../types.ts';
+import { linearScale } from '../scale.ts';
 import { buildingSpec, type BuildingSpec } from '../buildings/spec.ts';
 import { planCranes } from '../buildings/crane.ts';
 import type { Building, BuildingType, ParkingLot } from '../buildings/types.ts';
@@ -32,6 +33,8 @@ export interface BuildingInput {
   cities: CitySite[];
   /** City id + 1 per cell. */
   cityMask: Uint8Array;
+  /** Play area side in cells: bigger maps get a denser countryside (see terrain/scale.ts). */
+  size: number;
 }
 
 export interface BuildingResult {
@@ -266,6 +269,8 @@ export function placeBuildings(input: BuildingInput, rng: Rng, noise: Noise2D): 
 
   // 2. Street fronts, city and country, edge by edge, each side in turn.
   let ruralGas = 0;
+  // Bigger maps: more farms and hamlets along the country roads (1 up to the reference map).
+  const ruralDensity = linearScale(input.size);
   for (const walk of walks) {
     const { edge, total } = walk;
     for (const side of [1, -1]) {
@@ -313,7 +318,7 @@ export function placeBuildings(input: BuildingInput, rng: Rng, noise: Noise2D): 
 
         // Country: hamlets where the settlement field is high, lone farms elsewhere.
         const dens = settlement(noise, p.x, p.z);
-        const chance = dens > 0.58 ? 0.7 : dens > 0.45 ? 0.25 : 0.04;
+        const chance = Math.min(0.95, (dens > 0.58 ? 0.7 : dens > 0.45 ? 0.25 : 0.04) * ruralDensity);
         if (s < RURAL_NODE_CLEAR || rng() >= chance) {
           s += 8;
           continue;
@@ -324,7 +329,7 @@ export function placeBuildings(input: BuildingInput, rng: Rng, noise: Noise2D): 
         const at = s + spec.width / 2;
         const setback = type === 'gas' ? GAS_SETBACK : RURAL_SETBACK[0] + rng() * (RURAL_SETBACK[1] - RURAL_SETBACK[0]);
         const jitter = type === 'gas' ? 0 : (rng() - 0.5) * 0.12;
-        const gap = dens > 0.58 ? 4 + rng() * 8 : 30 + rng() * 70;
+        const gap = dens > 0.58 ? 4 + rng() * 8 : (30 + rng() * 70) / ruralDensity;
         if (at + spec.width / 2 > total - RURAL_NODE_CLEAR || walk.blockedAt(at, spec.width / 2)) {
           s += 6;
           continue;

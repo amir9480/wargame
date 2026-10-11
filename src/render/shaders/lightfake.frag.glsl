@@ -1,9 +1,11 @@
 varying vec2 vUv;
 varying vec3 vColor;
 
+#include ./chunks/townkeep.glsl;
+
 void main() {
   float r = length(vUv - 0.5) * 2.0;
-  if (r >= 1.0) discard;
+  if (r >= 1.0 || !townKeep(gl_FragCoord.xy)) discard;
 #ifdef FLAT
   // Soft pool. Added as is (no surface colour to multiply with, unlike the deferred light), so it is kept faint: dense
   // town lamps overlap and would wash the streets out.

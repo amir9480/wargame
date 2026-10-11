@@ -12,7 +12,7 @@ description: Details of player bases, cities (street grids), buildings (types, s
 - Typical spacing ≥150 m between closest bases on 90% of maps, median ~196 m (3-sea-side maps can be ~90 m).
 
 # Cities (`modules/cities.ts`)
-- Count roll 0/1/2 (30/45/25%). Site = best score of distance to the nearest base (contested) − 0.35 · distance to the play area centre (+ noise), over dry gentle land (SAT); never water, river ±3, mountain > 1.5, base square + 10. Radius 30–44 cells, retried at ×0.8 / ×0.65; 2nd city keeps clear of the 1st.
+- Radius × `linearScale` (scale.ts; towns grow with the map, counts do not). Count roll 0/1/2 (30/45/25%). Site = best score of distance to the nearest base (contested) − 0.35 · distance to the play area centre (+ noise), over dry gentle land (SAT); never water, river ±3, mountain > 1.5, base square + 10. Radius 30–44 cells, retried at ×0.8 / ×0.65; 2nd city keeps clear of the 1st.
 - Shape = noise-ragged disc of usable cells connected to the centre (`cityMask` = id+1). Levelled to its mean keeping 30% relief. `City { id, x, y, z, radius (m), angle, block }`.
 - Street grid: two families of parallel lines `block` (20–26 cells) apart at a random angle, clipped to the shape, nodes at crossings and ends; largest connected piece; < 4 streets ⇒ no city.
 - Roads: streets are laid first as straight asphalt edges between `junction` nodes (after the base nodes, ids 0..3); each city is routed (asphalt) to its two nearest bases. Rail keeps out of city discs. **No city ⇒ no extra rng draws.**

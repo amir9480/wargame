@@ -1,10 +1,16 @@
 varying vec2 vUv;
 varying vec3 vColor;
 varying float vBokeh; // 0 = sharp dot, 1 = out-of-focus bokeh disc (ultra)
+#ifdef TOWN_FADE
+#include ./chunks/townkeep.glsl; // halos of towns' windows: dithered cross-fade between the detailed and the city model's
+#endif
 
 void main() {
   float r = length(vUv - 0.5) * 2.0;
   if (r >= 1.0) discard;
+#ifdef TOWN_FADE
+  if (!townKeep(gl_FragCoord.xy)) discard;
+#endif
   float g = (1.0 - r) / (1.0 + 40.0 * r * r); // bright core, short tail
   if (vBokeh > 0.0) {
     // Flat disc with a brighter rim and soft edge; the quad is larger, so the energy is spread over its area.
