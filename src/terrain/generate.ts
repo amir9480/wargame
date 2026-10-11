@@ -17,6 +17,8 @@ export { ROCK_VARIANTS, type Rock } from './modules/rocks.ts';
 export type { River } from './modules/rivers.ts';
 export * from './modules/roads/index.ts';
 export type { Lighthouse, RadioTower } from './modules/landmarks.ts';
+export type { PowerGrid, PowerLine, PowerSite, PowerSiteKind, Pylon, UtilityPole } from './modules/power.ts';
+export { INSULATOR, PLANT_SIZE, POLE_SLOTS, PYLON_ARMS, PYLON_PEAK, SUBSTATION_SIZE, pylonAttach, siteGantry, siteScale, siteToWorld } from './modules/power.ts';
 export { PLAYER_SLOTS, type Base } from './modules/bases.ts';
 export { TREE_TYPES, type Tree, type TreeCover, type TreeType } from './modules/trees.ts';
 export { BUILDING_TYPES, type Building, type BuildingCondition, type BuildingType, type City, type Crane, type ParkingLot } from './buildings/types.ts';

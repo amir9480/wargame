@@ -7,6 +7,7 @@ import { TreeLayer } from './trees.ts';
 import { BaseLayer } from './bases.ts';
 import { StreetLightLayer } from './streetlights.ts';
 import { LandmarkLayer } from './landmarks.ts';
+import { PowerLayer } from './power.ts';
 import { GroundLayer } from './ground.ts';
 import { BuildingLayer } from './buildings/layer.ts';
 import { UrbanLayer } from './urban.ts';
@@ -65,6 +66,7 @@ export class World {
   private bases: BaseLayer;
   private streetLights: StreetLightLayer;
   private landmarks: LandmarkLayer;
+  private power: PowerLayer;
   private buildings: BuildingLayer;
   private urban: UrbanLayer;
   private env: Environment;
@@ -88,12 +90,13 @@ export class World {
     this.buildings = new BuildingLayer(env, this.lights);
     this.urban = new UrbanLayer(textures, env, this.lights);
     this.landmarks = new LandmarkLayer(env, this.lights);
+    this.power = new PowerLayer(env, this.lights);
     this.group.add(
       this.ground.group, this.rocks.group, this.roads.group, this.trees.group, this.bases.group, this.streetLights.group,
-      this.buildings.group, this.urban.group, this.landmarks.group,
+      this.buildings.group, this.urban.group, this.landmarks.group, this.power.group,
     );
-    const { ground, rocks, roads, trees, bases, streetLights, buildings, urban, landmarks } = this;
-    this.pipeline = new RenderPipeline({ ground, rocks, roads, trees, bases, streetLights, buildings, urban, landmarks, lights: this.lights });
+    const { ground, rocks, roads, trees, bases, streetLights, buildings, urban, landmarks, power } = this;
+    this.pipeline = new RenderPipeline({ ground, rocks, roads, trees, bases, streetLights, buildings, urban, landmarks, power, lights: this.lights });
   }
 
   /**
@@ -112,6 +115,7 @@ export class World {
       { name: 'urban (decals, cars, signals)', object: this.urban.group },
       { name: 'street lights', object: this.streetLights.group },
       { name: 'landmarks', object: this.landmarks.group },
+      { name: 'power (plants, pylons, poles)', object: this.power.group },
     ];
   }
 
@@ -270,6 +274,7 @@ export class World {
     profiler.scope('update', 'buildings', () => this.buildings.update(day));
     profiler.scope('update', 'urban (signals, car parks)', () => this.urban.update(time, day));
     profiler.scope('update', 'landmarks', () => this.landmarks.update(day));
+    profiler.scope('update', 'power', () => this.power.update(day));
     this.lights.setTime(time);
     // Edge haze over the outer three quarters of the grid margin beyond the play area (fogdist.glsl).
     const map = this.pipeline.map;
@@ -277,7 +282,7 @@ export class World {
     const grid = map ? map.worldSize / 2 : 2e9;
     const near = play + (grid - play) * 0.25;
     const far = grid - 2;
-    for (const m of [terrainMat, waterMat, skirtMat, this.rocks.material, ...this.rocks.billboardMaterials, ...this.roads.materials, this.trees.material, this.trees.billboardMaterial, ...this.bases.materials, this.streetLights.material, ...this.buildings.materials, ...this.urban.materials, this.landmarks.material]) {
+    for (const m of [terrainMat, waterMat, skirtMat, this.rocks.material, ...this.rocks.billboardMaterials, ...this.roads.materials, this.trees.material, this.trees.billboardMaterial, ...this.bases.materials, this.streetLights.material, ...this.buildings.materials, ...this.urban.materials, this.landmarks.material, this.power.material]) {
       m.uniforms.fogNear.value = near;
       m.uniforms.fogFar.value = far;
       m.uniforms.fogOrigin = this.fogOrigin; // shared objects; the first frame precedes the first draw

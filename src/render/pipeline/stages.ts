@@ -6,7 +6,7 @@
 //   roads   -> road / railway ribbons per type, then bridges
 //   buildings -> building meshes per chunk (nearest first), then the gas station lights
 //   props   -> rocks, then trees, band by band (generation order: cosmetic random streams depend on it)
-//   lights  -> street lights (need the finished roads, rocks and trees); sidewalks, car parks, traffic lights; the wet
+//   lights  -> street lights (need the finished roads, rocks and trees); power plants, pylons and poles; sidewalks, car parks, traffic lights; the wet
 //              mask for light reflections
 
 import type { GenEvent, Terrain } from '../../terrain/generate.ts';
@@ -20,6 +20,7 @@ import type { StreetLightLayer } from '../streetlights.ts';
 import type { BuildingLayer } from '../buildings/layer.ts';
 import type { UrbanLayer } from '../urban.ts';
 import type { LandmarkLayer } from '../landmarks.ts';
+import type { PowerLayer } from '../power.ts';
 import type { LightField } from '../lights.ts';
 import { buildWetMask } from '../wetmask.ts';
 import type { JobQueue } from './queue.ts';
@@ -37,6 +38,7 @@ export interface RenderLayers {
   buildings: BuildingLayer;
   urban: UrbanLayer;
   landmarks: LandmarkLayer;
+  power: PowerLayer;
   lights: LightField;
 }
 
@@ -92,6 +94,11 @@ export const RENDER_STAGES: Handlers = {
     ctx.map.lighthouses = lighthouses;
     ctx.map.towers = towers;
     ctx.queue.add('landmarks', { rank: RANK.lights, run: () => ctx.layers.landmarks.build(lighthouses, towers, ctx.grid) });
+  },
+
+  power({ power }, ctx) {
+    ctx.map.power = power;
+    ctx.queue.add('power', { rank: RANK.lights, run: () => ctx.layers.power.build(ctx.map, ctx.grid) });
   },
 
   roads({ roads }, ctx) {

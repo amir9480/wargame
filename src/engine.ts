@@ -56,6 +56,11 @@ export interface MapInfo {
   cityBuildings: number;
   abandoned: number;
   construction: number;
+  /** Power plants, substations, high-voltage pylons and utility poles. */
+  plantCount: number;
+  substationCount: number;
+  pylonCount: number;
+  poleCount: number;
   landPercent: number;
   genMs: number;
   /** From the first map piece reaching the renderer (the first meshes get built) until the very last item is built; overlaps generation, which streams. */
@@ -515,6 +520,10 @@ function mapInfo(terrain: Terrain, genMs: number, loadMs: number): MapInfo {
     cityBuildings: terrain.buildings.filter((b) => b.city >= 0).length,
     abandoned: terrain.buildings.filter((b) => b.condition === 'abandoned').length,
     construction: terrain.buildings.filter((b) => b.condition === 'construction').length,
+    plantCount: terrain.power.sites.filter((s) => s.kind === 'plant').length,
+    substationCount: terrain.power.sites.filter((s) => s.kind === 'substation').length,
+    pylonCount: terrain.power.lines.reduce((n, l) => n + l.pylons.length, 0),
+    poleCount: terrain.power.poles.length,
     landPercent: Math.round(terrain.landRatio * 100),
     genMs: Math.round(genMs),
     loadMs: Math.round(loadMs),

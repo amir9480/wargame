@@ -67,6 +67,7 @@ export class RenderPipeline {
     this.push({ kind: 'roads', roads: terrain.roads });
     this.push({ kind: 'buildings', buildings: terrain.buildings, parking: terrain.parking });
     this.push({ kind: 'landmarks', lighthouses: terrain.lighthouses, towers: terrain.towers });
+    this.push({ kind: 'power', power: terrain.power });
     this.push({ kind: 'cover', j0: 0, j1: N, data: terrain.dirt });
     this.push({ kind: 'rocks', rocks: terrain.rocks });
     this.push({ kind: 'trees', type: terrain.trees.type, trees: terrain.trees.trees });
@@ -94,6 +95,7 @@ export class RenderPipeline {
       parking: [],
       lighthouses: [],
       towers: [],
+      power: { sites: [], lines: [], poles: [], links: [] },
       rocks: [],
       dirt: new Float32Array(N * N),
       mountain: new Float32Array(N * N),
@@ -101,7 +103,7 @@ export class RenderPipeline {
       landRatio: 0,
     };
     const grid = new ChunkGrid(map.worldSize, map.cell);
-    const { ground, rocks, trees, roads, bases, streetLights, buildings, urban, landmarks, lights } = this.layers;
+    const { ground, rocks, trees, roads, bases, streetLights, buildings, urban, landmarks, power, lights } = this.layers;
     this.queue.clear();
     lights.setWetMask(null, 1); // no reflections until the new map's mask is built
     ground.begin(map, grid);
@@ -113,6 +115,7 @@ export class RenderPipeline {
     buildings.clear();
     urban.clear();
     landmarks.clear();
+    power.clear();
 
     this.resolveBuilt(); // an abandoned map counts as done for whoever waited on it
     this.built = new Promise((resolve) => (this.resolveBuilt = resolve));

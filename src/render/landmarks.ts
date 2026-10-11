@@ -35,7 +35,7 @@ const CONCRETE = 0x9a978f;
 const STEEL = 0x8c9399;
 const GLASS = 0xffe6a0;
 
-type V3 = [number, number, number];
+export type V3 = [number, number, number];
 
 /**
  * Lighthouse beams: two soft rays turning round the lantern, like a street lamp's ray but sweeping (no spot light: nothing
@@ -176,7 +176,7 @@ const ANTENNA_HEIGHT = 3;
 // Geometry helpers (local frame: origin at the structure's foot)
 
 /** Tapered upright prism / cylinder from radius r0 at y0 to r1 at y0 + h (no caps). */
-function frustum(m: MeshData, y0: number, r0: number, r1: number, h: number, n: number): void {
+export function frustum(m: MeshData, y0: number, r0: number, r1: number, h: number, n: number): void {
   for (let i = 0; i < n; i++) {
     const a0 = (i / n) * Math.PI * 2, a1 = ((i + 1) / n) * Math.PI * 2, mid = (a0 + a1) / 2;
     m.face(
@@ -188,7 +188,7 @@ function frustum(m: MeshData, y0: number, r0: number, r1: number, h: number, n: 
 }
 
 /** Flat disc (n-gon) at height y facing up (or down). */
-function disc(m: MeshData, y: number, r: number, n: number, up = true): void {
+export function disc(m: MeshData, y: number, r: number, n: number, up = true): void {
   for (let i = 0; i < n; i++) {
     const a0 = (i / n) * Math.PI * 2, a1 = ((i + 1) / n) * Math.PI * 2;
     m.face([[0, y, 0], [Math.cos(a0) * r, y, Math.sin(a0) * r], [Math.cos(a1) * r, y, Math.sin(a1) * r]], [0, up ? 1 : -1, 0]);
@@ -196,7 +196,7 @@ function disc(m: MeshData, y: number, r: number, n: number, up = true): void {
 }
 
 /** Cone from radius r at y0 up to a point at y0 + h. */
-function cone(m: MeshData, y0: number, r: number, h: number, n: number): void {
+export function cone(m: MeshData, y0: number, r: number, h: number, n: number): void {
   for (let i = 0; i < n; i++) {
     const a0 = (i / n) * Math.PI * 2, a1 = ((i + 1) / n) * Math.PI * 2, mid = (a0 + a1) / 2;
     m.face(
@@ -207,7 +207,7 @@ function cone(m: MeshData, y0: number, r: number, h: number, n: number): void {
 }
 
 /** Thin square-section strut between two points (t = side length). */
-function strut(m: MeshData, a: V3, b: V3, t: number): void {
+export function strut(m: MeshData, a: V3, b: V3, t: number): void {
   const d: V3 = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
   const len = Math.hypot(...d);
   if (len < 1e-6) return;

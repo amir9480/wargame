@@ -9,6 +9,7 @@
 //   roads   -> city streets, roads linking the bases and cities (plus exits, bridges, railway); flattens ground under them
 //   buildings -> buildings along the roads (dense in towns, hamlets and farms elsewhere), each on a levelled pad
 //   landmarks -> 0..4 lighthouses on the beaches, 0..3 telecommunication towers on the mountains (small levelled pads)
+//   power   -> power plants (one per city at least), substations, high-voltage pylon lines, roadside utility poles (plants levelled)
 //   cover   -> dirt vs grass ground cover (row bands)
 //   rocks   -> boulders over the finished ground, off the roads (row bands)
 //   trees   -> forests and lone trees, one species per map (row bands)
@@ -30,6 +31,7 @@ import { placeBases } from '../modules/bases.ts';
 import { placeCities } from '../modules/cities.ts';
 import { placeBuildings } from '../modules/buildings.ts';
 import { placeLighthouses, placeTowers } from '../modules/landmarks.ts';
+import { placePower } from '../modules/power.ts';
 import { generateRoads } from '../modules/roads/index.ts';
 import { coverBuilder } from '../modules/cover.ts';
 import { rockScatter } from '../modules/rocks.ts';
@@ -199,6 +201,22 @@ const landmarks: GenStage = {
   },
 };
 
+const power: GenStage = {
+  name: 'power',
+  *run(ctx) {
+    const { N, cell, play, heights, mountain, riverMask, streamMask, roadMask, clear, roads, buildings, cities, bases } = ctx;
+    const result = placePower(
+      { N, cell, play, heights, mountain, riverMask, streamMask, roadMask, clear, roads, buildings, cities, bases, mountainSides: ctx.ranges.map((r) => r.side), landmarks: [...ctx.lighthouses, ...ctx.towers] },
+      stageRng(ctx.seed, STAGE.power),
+    );
+    ctx.power = result.grid;
+    // Rocks and trees keep off the pads, pylon feet and poles.
+    for (let k = 0; k < ctx.clear.length; k++) if (result.clearing[k]) ctx.clear[k] = 1;
+    if (ctx.power.sites.length) yield heightsEvent(ctx);
+    yield { kind: 'power', power: ctx.power };
+  },
+};
+
 const cover: GenStage = {
   name: 'cover',
   *run(ctx) {
@@ -246,4 +264,4 @@ const trees: GenStage = {
 };
 
 /** Generator stages in pipeline order (later stages read and modify earlier results). */
-export const GENERATOR_STAGES: readonly GenStage[] = [layout, relief, rivers, bases, cities, roads, buildings, landmarks, cover, rocks, trees];
+export const GENERATOR_STAGES: readonly GenStage[] = [layout, relief, rivers, bases, cities, roads, buildings, landmarks, power, cover, rocks, trees];

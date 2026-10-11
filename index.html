@@ -44,6 +44,7 @@
         <dt>Bridges</dt><dd x-text="info?.bridges"></dd>
         <dt>Towns</dt><dd x-text="info ? (info.cityCount ? `${info.cityCount} · ${info.cityBuildings} buildings` : 'none') : ''"></dd>
         <dt>Buildings</dt><dd x-text="info ? `${info.buildingCount} (${info.abandoned} abandoned, ${info.construction} unfinished` + (destroyed ? `, ${destroyed} destroyed)` : ')') : ''"></dd>
+        <dt>Power</dt><dd x-text="info ? (info.plantCount ? `${info.plantCount} plant · ${info.substationCount} substations · ${info.pylonCount} pylons · ${info.poleCount} poles` : 'none') : ''"></dd>
         <dt>Trees</dt><dd class="cap" x-text="info ? `${info.treeCount} ${info.treeType}` : ''"></dd>
         <dt>Dirt</dt><dd x-text="info ? `${info.dirtPercent}% of land` : ''"></dd>
         <dt>Rocks</dt><dd x-text="info?.rockCount"></dd>

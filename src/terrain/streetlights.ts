@@ -122,6 +122,7 @@ export function planStreetLights(t: Terrain): StreetLight[] {
   const props = new SpotHash();
   for (const r of t.rocks) props.add({ x: r.x, z: r.z, r: r.size, edge: -1, arc: 0 });
   for (const tree of t.trees.trees) props.add({ x: tree.x, z: tree.z, r: 0.4 * tree.scale, edge: -1, arc: 0 });
+  for (const pole of t.power.poles) props.add({ x: pole.x, z: pole.z, r: 0.3, edge: -1, arc: 0 }); // utility poles
   /** Pole within BUILDING_CLEARANCE of a building's footprint. */
   const nearBuilding = (x: number, z: number) =>
     t.buildings.some((b) => {

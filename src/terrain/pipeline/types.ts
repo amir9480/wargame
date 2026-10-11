@@ -14,6 +14,7 @@ import type { Tree, TreeCover, TreeType } from '../modules/trees.ts';
 import type { CitySite } from '../modules/cities.ts';
 import type { Building, City, ParkingLot } from '../buildings/types.ts';
 import type { Lighthouse, RadioTower } from '../modules/landmarks.ts';
+import type { PowerGrid } from '../modules/power.ts';
 
 export interface Terrain {
   seed: number;
@@ -48,6 +49,8 @@ export interface Terrain {
   lighthouses: Lighthouse[];
   /** 0..3 telecommunication towers on the mountains. */
   towers: RadioTower[];
+  /** Power plants and substations, high-voltage pylon lines and roadside utility poles (a plant whenever there is a city). */
+  power: PowerGrid;
   rocks: Rock[];
   /** Dirt amount per grid cell (0 = grass .. 1 = bare dirt), same layout as heights. */
   dirt: Float32Array;
@@ -74,7 +77,7 @@ export type TerrainMeta = Pick<
 >;
 
 /** Generator stages, in pipeline order. */
-export const GEN_STAGES = ['layout', 'relief', 'rivers', 'bases', 'cities', 'roads', 'buildings', 'landmarks', 'cover', 'rocks', 'trees', 'finish'] as const;
+export const GEN_STAGES = ['layout', 'relief', 'rivers', 'bases', 'cities', 'roads', 'buildings', 'landmarks', 'power', 'cover', 'rocks', 'trees', 'finish'] as const;
 export type GenStageName = (typeof GEN_STAGES)[number];
 
 /**
@@ -93,6 +96,7 @@ export type GenEvent =
   | { kind: 'roads'; roads: RoadNetwork }
   | { kind: 'buildings'; buildings: Building[]; parking: ParkingLot[] }
   | { kind: 'landmarks'; lighthouses: Lighthouse[]; towers: RadioTower[] }
+  | { kind: 'power'; power: PowerGrid }
   | { kind: 'cover'; j0: number; j1: number; data: Float32Array }
   /** Rocks / trees of one more row band (in generation order). */
   | { kind: 'rocks'; rocks: Rock[] }
@@ -136,6 +140,7 @@ export interface GenContext {
   parking: ParkingLot[];
   lighthouses: Lighthouse[];
   towers: RadioTower[];
+  power: PowerGrid;
   /** 1 under buildings and their yards. */
   builtMask: Uint8Array;
   /** 1 on road / rail / bridge cells. */
