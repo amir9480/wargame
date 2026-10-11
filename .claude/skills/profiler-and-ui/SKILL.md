@@ -1,0 +1,15 @@
+---
+name: profiler-and-ui
+description: The built-in profiler (src/core/profiler.ts, GPU timers, detail mode, report) and the UI panel (index.html + main.ts Alpine mapPanel, info rows, debug views, persistence). Load before adding instrumentation, a panel control, an info row or a debug view.
+---
+
+# Profiler
+- `src/core/profiler.ts` (`profiler` singleton, pure TS): categorised CPU scopes (`scope(cat, name, fn)` / `begin` + `end`, self time), `pass(name, fn)` for render passes (CPU scope `render/*` + GPU timer query + draw calls / triangles via renderer info), `count(cat, name, v)`, frame stats (wall / CPU / GPU, worst frames). Everything is one boolean check while not recording, so keep instrumentation in. `render/gpuTimer.ts` = `EXT_disjoint_timer_query_webgl2` probe (queries don't nest: only the outermost `pass` queries; results arrive late, tagged with their frame). `renderer.info.autoReset` is off; the frame loop resets it once per frame.
+- Instrumented: engine frame loop, every `Lighting.render` pass, culling, `World.update` layers, build jobs per kind (`queue.ts`), scene sync, generation events / stage times, atmosphere bake, time of day, quality changes. **New heavy code: wrap it in a scope (category = subsystem) or `pass`.**
+- **Detail mode** (checkbox, default on; `profiler.setDetailed`): `profiler.group(name, fn)` / `part(group, part, fn)` make a pass of parts (only the parts timed, as `<group>: <part>`). Used by `Lighting.drawLayers`: scene and shadow pass drawn layer by layer (`World.layerGroups()`), bloom / AO / god rays per full-screen pass. `Lighting.drawPost` re-runs the post pass on ~1 frame in 30 per feature with it switched off (`post without: <feature>`): the A/B section of the report. Frame times run a little high and the picture flickers on those frames.
+- UI: "Record profiler" button; stopping shows a copyable report (environment, frame percentiles, bottleneck verdict CPU / GPU / display-capped, CPU by category and scope, GPU passes, counters, slowest frames, hints).
+
+# UI
+- `index.html` + `src/main.ts` (Alpine `mapPanel`): **Debug view** select (`render/debugView.ts`, `engine.debugView`, not persisted: final, triangles overlay / only (`Lighting.drawWire`), post terms alone: shadows, AO, local lights, depth, normals; post views disabled on low), seed input, Generate, random seed (both disabled while a map loads), load progress bar (`engine.onProgress`), info rows from `MapInfo` (`engine.ts` `mapInfo`: sea sides, mountain edges, rivers, bases, roads, railway, junctions, bridges, towns, buildings, power, trees, dirt, rocks, land, gen time, load time, FPS, drawn chunk meshes, culled, draw calls, triangles), destruction test buttons (destroy 10% / repair all via `engine.buildingState`), time-of-day slider, quality select, "Copy debug info".
+- Persistence (`wargame.settings` in `localStorage`, every access guarded): seed, hour, quality, camera view, panel collapsed. Default seed 42.
+- New info row: field in `MapInfo` + `mapInfo()` in `engine.ts` + `<dt>/<dd>` in `index.html`.
