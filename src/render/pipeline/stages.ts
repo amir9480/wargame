@@ -21,6 +21,8 @@ import type { BuildingLayer } from '../buildings/layer.ts';
 import type { UrbanLayer } from '../urban.ts';
 import type { LandmarkLayer } from '../landmarks.ts';
 import type { PowerLayer } from '../power.ts';
+import type { ParticleSystem } from '../particles/system.ts';
+import { collectEmitters } from '../particles/sources.ts';
 import type { LightField } from '../lights.ts';
 import { buildWetMask } from '../wetmask.ts';
 import type { JobQueue } from './queue.ts';
@@ -39,6 +41,7 @@ export interface RenderLayers {
   urban: UrbanLayer;
   landmarks: LandmarkLayer;
   power: PowerLayer;
+  particles: ParticleSystem;
   lights: LightField;
 }
 
@@ -133,6 +136,7 @@ export const RENDER_STAGES: Handlers = {
     Object.assign(ctx.map, { ...terrain, heights: ctx.map.heights });
     ctx.queue.add('lights', { rank: RANK.lights, run: () => ctx.layers.streetLights.build(ctx.map, ctx.grid) });
     ctx.queue.add('urban', { rank: RANK.lights, run: () => ctx.layers.urban.build(ctx.map, ctx.grid) });
+    ctx.queue.add('particles', { rank: RANK.lights, run: () => ctx.layers.particles.build(collectEmitters(ctx.map), ctx.grid) });
     ctx.queue.add('wetmask', { rank: RANK.lights, run: () => ctx.layers.lights.setWetMask(buildWetMask(ctx.map), ctx.map.worldSize) });
     ctx.queue.add('finish', { rank: RANK.finish, run: () => ctx.finish() });
   },

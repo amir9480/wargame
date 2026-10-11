@@ -179,7 +179,9 @@ export class Culler {
 
   private item(o: THREE.Mesh, margin: number): CullItem {
     let box: THREE.Box3;
-    if (o instanceof THREE.InstancedMesh) {
+    if (o.userData.cullBox) {
+      box = (o.userData.cullBox as THREE.Box3).clone(); // content whose extent the geometry doesn't show (GPU-simulated particles)
+    } else if (o instanceof THREE.InstancedMesh) {
       o.computeBoundingBox();
       box = o.boundingBox!.clone();
     } else {

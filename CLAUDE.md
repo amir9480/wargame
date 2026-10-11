@@ -40,6 +40,7 @@ describes, update that skill in the same change (keep this file for rules every 
 | `terrain-power` | power plants, substations, pylons, utility poles, landmark feeds (`modules/power.ts`, `render/power.ts`) |
 | `render-architecture` | anything in `src/render/`: engine, render pipeline, World layers, culling, LOD, shader conventions, camera; adding a render layer |
 | `render-lighting` | lighting / shadows / SSAO / day-night, the `LightField`, light halos, quality presets, adding any light source |
+| `particles` | smoke / steam / any puff effect, emitters (`render/particles/*`, `shaders/particle.*`), who smokes |
 | `render-content-layers` | ground, roads + paint, street lights, buildings, urban decals / signals, landmarks rendering |
 | `profiler-and-ui` | instrumentation, the profiler report, the control panel, info rows, debug views |
 | `testing-workflow` | verifying a change: Node scripts, determinism, screenshots (headless Chrome / CDP), known limitations |

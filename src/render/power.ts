@@ -547,6 +547,18 @@ export function plantStacks(s: PowerSite): { x: number; z: number; height: numbe
   return xs.map((x, i) => ({ x: x * k, z: -22 * k, height: (74 + 10 * ((hash32(s.seed, 7 + i) % 100) / 100)) * hs }));
 }
 
+/** Cooling tower / condenser spots (local x, z, base radius) at site scale k. */
+function coolerSpots(k: number): [number, number, number][] {
+  return [[19 * k, -10 * k, 10.5 * k], [19 * k, 13 * k, 8.5 * k]];
+}
+
+/** Open tops of a plant's hyperbolic cooling towers (local x, z, height, radius), after scaling: where the steam comes out. */
+export function plantCoolers(s: PowerSite): { x: number; z: number; height: number; radius: number }[] {
+  if (s.coolers === 0) return [];
+  const k = siteScale(s), hs = 0.6 + 0.4 * k;
+  return coolerSpots(k).slice(0, Math.min(2, s.coolers)).map(([x, z, R]) => ({ x, z, height: 48 * hs, radius: R * 0.78 }));
+}
+
 function buildPlant(m: MeshData, s: PowerSite, far: boolean): void {
   m.frame(s.x, s.y, s.z, s.yaw);
   const k = siteScale(s);
@@ -595,7 +607,7 @@ function buildPlant(m: MeshData, s: PowerSite, far: boolean): void {
     m.box(st.x + r1 * 0.9, st.height, st.z, 0.5, 0.7, 0.5); // beacon housing on the rim (the light itself is a LightDef)
   }
   // Cooling towers (hyperbolic) or, without them, an air-cooled condenser bank.
-  const towerSpots: [number, number, number][] = [[19 * k, -10 * k, 10.5 * k], [19 * k, 13 * k, 8.5 * k]];
+  const towerSpots = coolerSpots(k);
   if (s.coolers === 0) {
     m.setColor(0x9aa0a4);
     m.box(towerSpots[0][0], 0, towerSpots[0][1], 16 * k, 11 * hs, 12 * k);

@@ -4,6 +4,7 @@
 
 import type * as THREE from 'three';
 import type { GenEvent, Terrain, TerrainMeta } from '../../terrain/generate.ts';
+import { hash32 } from '../../core/rng.ts';
 import { ChunkGrid } from '../culling.ts';
 import { JobQueue } from './queue.ts';
 import { RENDER_STAGES, type RenderContext, type RenderLayers } from './stages.ts';
@@ -103,7 +104,7 @@ export class RenderPipeline {
       landRatio: 0,
     };
     const grid = new ChunkGrid(map.worldSize, map.cell);
-    const { ground, rocks, trees, roads, bases, streetLights, buildings, urban, landmarks, power, lights } = this.layers;
+    const { ground, rocks, trees, roads, bases, streetLights, buildings, urban, landmarks, power, particles, lights } = this.layers;
     this.queue.clear();
     lights.setWetMask(null, 1); // no reflections until the new map's mask is built
     ground.begin(map, grid);
@@ -116,6 +117,8 @@ export class RenderPipeline {
     urban.clear();
     landmarks.clear();
     power.clear();
+    particles.clear();
+    particles.setWind(hash32(map.seed, 0x91d) / 4294967296 * Math.PI * 2, 2.5 + (hash32(map.seed, 0x91e) % 100) / 40);
 
     this.resolveBuilt(); // an abandoned map counts as done for whoever waited on it
     this.built = new Promise((resolve) => (this.resolveBuilt = resolve));

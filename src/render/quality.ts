@@ -62,24 +62,26 @@ export interface QualitySettings {
   anisotropy: number;
   /** Size (per axis, share of the screen) of the deferred light buffer and the light ray / wet reflection target. */
   lightResolution: number;
+  /** Share (0-1) of the particle slots drawn (smoke, steam): thins every plume. */
+  particleDensity: number;
 }
 
 export const QUALITY_SETTINGS: Record<Quality, QualitySettings> = {
   low: {
     renderScale: 0.75, pixelRatioCap: 1, dynamicResolution: 0, msaa: 0, post: false, shadowMap: 0, shadowTaps: 1, contactSteps: 0, aoSamples: 0,
-    deferredLights: false, lightShafts: false, lightReflections: false, bloomLevels: 0, godRays: false, bokeh: true, fxaa: true, sharpen: 0.7, tiltShift: 0, chromatic: 0.6, propDistance: 480, spriteDistance: 90, buildingDistance: 180, terrainLodScale: 0.5, lightDistance: 400, anisotropy: 2, lightResolution: 0.25,
+    deferredLights: false, lightShafts: false, lightReflections: false, bloomLevels: 0, godRays: false, bokeh: true, fxaa: true, sharpen: 0.7, tiltShift: 0, chromatic: 0.6, propDistance: 480, spriteDistance: 90, buildingDistance: 180, terrainLodScale: 0.5, lightDistance: 400, anisotropy: 2, lightResolution: 0.25, particleDensity: 0.4,
   },
   normal: {
     renderScale: 1, pixelRatioCap: 1, dynamicResolution: 0, msaa: 0, post: true, shadowMap: 1024, shadowTaps: 2, contactSteps: 0, aoSamples: 0,
-    deferredLights: true, lightShafts: false, lightReflections: true, bloomLevels: 4, godRays: false, bokeh: true, fxaa: true, sharpen: 0.4, tiltShift: 0.6, chromatic: 0.6, propDistance: Infinity, spriteDistance: 150, buildingDistance: 240, terrainLodScale: 0.75, lightDistance: 500, anisotropy: 4, lightResolution: 0.5,
+    deferredLights: true, lightShafts: false, lightReflections: true, bloomLevels: 4, godRays: false, bokeh: true, fxaa: true, sharpen: 0.4, tiltShift: 0.6, chromatic: 0.6, propDistance: Infinity, spriteDistance: 150, buildingDistance: 240, terrainLodScale: 0.75, lightDistance: 500, anisotropy: 4, lightResolution: 0.5, particleDensity: 0.7,
   },
   high: {
     renderScale: 1, pixelRatioCap: 1.25, dynamicResolution: 0.7, msaa: 0, post: true, shadowMap: 2048, shadowTaps: 2, contactSteps: 10, aoSamples: 8,
-    deferredLights: true, lightShafts: true, lightReflections: true, bloomLevels: 5, godRays: false, bokeh: true, fxaa: true, sharpen: 0.35, tiltShift: 1, chromatic: 0.6, propDistance: Infinity, spriteDistance: 220, buildingDistance: 320, terrainLodScale: 1, lightDistance: 700, anisotropy: 8, lightResolution: 0.5,
+    deferredLights: true, lightShafts: true, lightReflections: true, bloomLevels: 5, godRays: false, bokeh: true, fxaa: true, sharpen: 0.35, tiltShift: 1, chromatic: 0.6, propDistance: Infinity, spriteDistance: 220, buildingDistance: 320, terrainLodScale: 1, lightDistance: 700, anisotropy: 8, lightResolution: 0.5, particleDensity: 1,
   },
   ultra: {
     renderScale: 1, pixelRatioCap: 1.5, dynamicResolution: 0.6, msaa: 0, post: true, shadowMap: 2048, shadowTaps: 2, contactSteps: 10, aoSamples: 8,
-    deferredLights: true, lightShafts: true, lightReflections: true, bloomLevels: 5, godRays: true, bokeh: true, fxaa: true, sharpen: 0.35, tiltShift: 1, chromatic: 0.6, propDistance: Infinity, spriteDistance: 260, buildingDistance: 380, terrainLodScale: 1.25, lightDistance: 850, anisotropy: 8, lightResolution: 0.5,
+    deferredLights: true, lightShafts: true, lightReflections: true, bloomLevels: 5, godRays: true, bokeh: true, fxaa: true, sharpen: 0.35, tiltShift: 1, chromatic: 0.6, propDistance: Infinity, spriteDistance: 260, buildingDistance: 380, terrainLodScale: 1.25, lightDistance: 850, anisotropy: 8, lightResolution: 0.5, particleDensity: 1,
   },
 };
 

@@ -95,10 +95,13 @@ void main() {
   float d0 = texture2D(tDepth, vUv).r;
   if (debugView == 4 && d0 < 1.0) term = vec3(exp(-linearDepth(d0) / 400.0));
 
-  // src.a < 0.5 marks far-LOD sprite pixels (see billboard.frag.glsl): left untouched. (Triangles-only view: no extras.)
-  if (d0 < 1.0 && src.a > 0.5 && debugView != 6) {
+  // src.a = 1 - share of the pixel covered by particles (particle.frag.glsl; their depth isn't written, so shadows / AO /
+  // lights would be computed for the ground behind and painted over the smoke): the effects fade out with it. Far-LOD
+  // sprite pixels write 0 (see billboard.frag.glsl) and are left untouched. (Triangles-only view: no extras.)
+  float fx = smoothstep(0.0, 1.0, src.a);
+  if (d0 < 1.0 && src.a > 0.02 && debugView != 6) {
     vec3 P = worldAt(vUv, d0);
-    float region = 1.0 - smoothstep(0.75 * regionR, regionR, distance(P.xz, focus.xz));
+    float region = (1.0 - smoothstep(0.75 * regionR, regionR, distance(P.xz, focus.xz))) * fx;
     // Pixels that melted into the map-edge haze (fogdist.glsl) keep no shadows / occlusion: they are haze colour already.
     region *= 1.0 - fogFade(P);
     // Shadows / AO darken the finished colour, which already has the aerial haze and ground mist in it: fade them with
@@ -243,7 +246,7 @@ void main() {
       // by that light gives the surface colour back; it is then lit by the local lights (after sun shadows).
       if (lit) {
         vec3 albedo = min(src.rgb / max(ambLum + direct, 0.04), vec3(1.5));
-        col += albedo * irradiance * mix(1.0, ao, 0.6);
+        col += albedo * irradiance * mix(1.0, ao, 0.6) * fx;
       }
     }
   }
