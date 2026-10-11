@@ -99,6 +99,8 @@ Alpine.data('mapPanel', () => ({
   resScale: 1,
   drawn: 0,
   chunks: 0,
+  drawCalls: 0,
+  triangles: 0,
   maxSeed: MAX_SEED,
   quality: saved.quality as Quality,
   /** Debug view of the render pipeline (not persisted). */
@@ -128,7 +130,9 @@ Alpine.data('mapPanel', () => ({
 
   init() {
     if (!engine) return;
-    engine.onStats = ({ fps, drawn, total, scale }) => {
+    engine.onStats = ({ fps, drawn, total, scale, calls, triangles }) => {
+      this.drawCalls = calls;
+      this.triangles = triangles;
       this.fps = fps;
       this.resScale = scale;
       this.drawn = drawn;

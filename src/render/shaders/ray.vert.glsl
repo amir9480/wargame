@@ -19,7 +19,9 @@ void main() {
   vRadius = length(m[0].xyz) / VOLUME_SCALE;
   vRayA = aRayA;
   vRayB = aRayB;
-  vColor = instanceColor * level;
+  // Fade out with the lamp's camera distance before the chunk is culled (SHAFT_FADE_END..+CHUNK_SLACK is the cull range).
+  float lampDist = distance(cameraPosition, aRayA.xyz);
+  vColor = instanceColor * level * (1.0 - smoothstep(SHAFT_FADE_START, SHAFT_FADE_END, lampDist));
 #ifdef ANIM
   vColor *= animBlink();
   vRayB.xyz = animAxis(aRayB.xyz); // rotating beams turn (their bounding sphere is centred on the lamp)

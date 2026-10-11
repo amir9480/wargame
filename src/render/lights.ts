@@ -42,6 +42,14 @@ const VOLUME_SCALE = 1.12;
 const SHAFT_DISTANCE = 260;
 /** Same for the beams of a lighthouse (a little further than a lamp's: the lantern stands high). */
 const TURNING_SHAFT_DISTANCE = 320;
+/** Rays fade out over this many metres of lamp distance, ending at the distances above. */
+const SHAFT_FADE_LENGTH = 80;
+/** The chunk is culled this much further than the fade end (half a chunk diagonal), so a lamp is fully faded before its chunk goes. */
+const SHAFT_CHUNK_SLACK = 50;
+
+function shaftDistance(turning: boolean): number {
+  return turning ? TURNING_SHAFT_DISTANCE : SHAFT_DISTANCE;
+}
 /** Widest half angle of a ray (the light's own cone is wider; rays read better narrow). */
 const SHAFT_MAX_ANGLE = THREE.MathUtils.degToRad(30);
 /** Wet-street reflections are drawn within this camera distance of their chunk centre: the shader's fade-out end
@@ -284,7 +292,12 @@ export class LightGroup {
     this.shaftMaterial = new THREE.ShaderMaterial({
       vertexShader: rayVertex,
       fragmentShader: rayFragment,
-      defines: { VOLUME_SCALE: VOLUME_SCALE.toFixed(3), ...(animated ? { ANIM: '' } : {}) },
+      defines: {
+        VOLUME_SCALE: VOLUME_SCALE.toFixed(3),
+        SHAFT_FADE_START: (shaftDistance(animated) - SHAFT_FADE_LENGTH).toFixed(1),
+        SHAFT_FADE_END: shaftDistance(animated).toFixed(1),
+        ...(animated ? { ANIM: '' } : {}),
+      },
       uniforms: { ...field.uniforms, level: this.material.uniforms.level },
       transparent: true,
       depthTest: false,
@@ -437,7 +450,7 @@ export class LightGroup {
     geo.setAttribute('aRayB', new THREE.InstancedBufferAttribute(rayB, 4));
     if (this.animated) geo.setAttribute('aAnim', animAttribute(spots));
     // Lighthouse beams reach far: seen from much further than a street lamp's cone.
-    mesh.userData.lodMax = spots.some((l) => l.anim?.kind === 'rotate') ? TURNING_SHAFT_DISTANCE : SHAFT_DISTANCE;
+    mesh.userData.lodMax = shaftDistance(spots.some((l) => l.anim?.kind === 'rotate')) + SHAFT_CHUNK_SLACK;
     mesh.userData.lodCenter = grid.center(key);
     this.shafts.push(mesh);
     this.field.shaftScene.add(mesh);

@@ -75,6 +75,9 @@ export interface FrameStats {
   /** Chunk meshes drawn / total after frustum culling. */
   drawn: number;
   total: number;
+  /** Draw calls and triangles submitted in the last frame (every pass: shadows, lights, post). */
+  calls: number;
+  triangles: number;
 }
 
 export class Engine {
@@ -470,7 +473,7 @@ export class Engine {
       frames++;
       acc += dt;
       if (acc >= 0.5) {
-        this.onStats({ fps: Math.round(frames / acc), scale: this.dynamicRes.scale, ...cull });
+        this.onStats({ fps: Math.round(frames / acc), scale: this.dynamicRes.scale, ...cull, calls: this.renderer.info.render.calls, triangles: this.renderer.info.render.triangles });
         frames = 0;
         acc = 0;
       }

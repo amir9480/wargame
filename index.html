@@ -52,6 +52,9 @@
         <dt>Load time</dt><dd x-text="info ? `${info.loadMs} ms` : ''"></dd>
         <dt>FPS</dt><dd x-text="fps"></dd>
         <dt>Drawn</dt><dd x-text="chunks ? `${drawn} / ${chunks} chunk meshes` : ''"></dd>
+        <dt>Culled</dt><dd x-text="chunks ? `${(chunks - drawn).toLocaleString()} objects` : ''"></dd>
+        <dt>Draw calls</dt><dd x-text="drawCalls ? drawCalls.toLocaleString() : ''"></dd>
+        <dt>Triangles</dt><dd x-text="triangles ? triangles.toLocaleString() : ''"></dd>
       </dl>
 
       <div class="buttons" x-show="info">
