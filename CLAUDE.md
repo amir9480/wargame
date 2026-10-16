@@ -1,8 +1,9 @@
 # Wargame – procedural RTS map generator
 
 Procedural terrain generator for a **multiplayer (2–4 players) modern-military RTS**.
-Current scope: map generation + rendering + RTS camera only (no units/gameplay yet).
-The generated `Terrain` object is meant to be consumed by future gameplay and AI code.
+Scope: map generation + rendering + RTS camera, plus a first playable skirmish layer (`src/game`, `src/ui`, `src/render/game`: base building,
+economy/power, placeholder units, combat, 3 AI opponents, authoritative sim with event log; see skill `game-sim`).
+The generated `Terrain` object is consumed by that gameplay and AI code.
 
 ## Working with files
 
@@ -43,6 +44,7 @@ describes, update that skill in the same change (keep this file for rules every 
 | `particles` | smoke / steam / any puff effect, emitters (`render/particles/*`, `shaders/particle.*`), who smokes |
 | `render-content-layers` | ground, roads + paint, street lights, buildings, urban decals / signals, landmarks rendering |
 | `profiler-and-ui` | instrumentation, the profiler report, the control panel, info rows, debug views |
+| `game-sim` | gameplay: `src/game/**` (sim, commands/events, economy, combat, AI, save/replica), `src/ui/game*`/`hud*`, `src/render/game/`; run `pnpm sim-check` after sim changes |
 | `testing-workflow` | verifying a change: Node scripts, determinism, screenshots (headless Chrome / CDP), known limitations |
 
 ## Stack & commands

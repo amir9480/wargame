@@ -3,6 +3,7 @@ import { type BuildingState, type GenEvent, type Side, type Terrain, type Terrai
 import { TerrainGenerator } from './terrain/generator.ts';
 import { World, type Environment, type TerrainTextures } from './render/world.ts';
 import { RTSCameraController, type CameraView } from './render/rtsCamera.ts';
+import { CinematicCamera } from './render/cinematicCamera.ts';
 import { Lighting } from './render/lighting.ts';
 import { applyTimeOfDay, DEFAULT_HOUR, goldenHour } from './render/timeOfDay.ts';
 import { Atmosphere } from './render/atmosphere.ts';
@@ -22,6 +23,8 @@ const TEXTURE_BASE = `${import.meta.env.BASE_URL}assets/textures/`;
 /** Main-thread time per frame spent building map meshes while a map streams in (ms). */
 const BUILD_BUDGET_MS = 6;
 /** Sun movement (radians, ~0.6 deg) that makes the far-LOD sprites bake their shading again. */
+/** One full in-game day lasts this many real seconds (12 minutes). */
+export const DAY_LENGTH_SECONDS = 12 * 60;
 const SPRITE_REBAKE_STEP = 0.01;
 /** Sun / moon movement (radians, ~0.3 deg) that makes the sky and aerial-perspective LUTs bake again. */
 const ATMOSPHERE_REBAKE_STEP = 0.005;
@@ -97,6 +100,8 @@ export class Engine {
   private scene = new THREE.Scene();
   private camera: THREE.PerspectiveCamera;
   private controller: RTSCameraController;
+  /** Takes the camera over from the controller behind the pause menu (see `cinematic` accessors). */
+  private cinematic: CinematicCamera;
   /** Debug freeze: the game camera (culling, LOD, shadows) stays here while `camera` flies free. */
   private frozen: { camera: THREE.PerspectiveCamera; focus: THREE.Vector3; distance: number; helper: THREE.CameraHelper } | null = null;
   private debugScene = new THREE.Scene();
@@ -151,6 +156,8 @@ export class Engine {
       heightAt: (x, z) => this.world?.heightAt(x, z) ?? 0,
       bound: ((MAP_SIZE - 1) * MAP_CELL) / 2,
     });
+
+    this.cinematic = new CinematicCamera(this.camera, (x, z) => this.world?.heightAt(x, z) ?? 0, ((MAP_SIZE - 1) * MAP_CELL) / 2);
 
     // Shared lighting environment: shaders keep references to these objects, applyTimeOfDay mutates them in place.
     this.env = {
@@ -230,6 +237,14 @@ export class Engine {
       return ctx;
     });
   }
+
+  /** Day / night cycle: the clock advances by itself (24 game hours per `DAY_LENGTH_SECONDS` of real time) while true. */
+  dayCycle = true;
+  /** Multiplier on the cycle's speed (the game speed while a game runs). */
+  dayCycleSpeed = 1;
+  /** Called (about 10x per second) with the new hour while the cycle runs. */
+  onTimeOfDay: (hour: number) => void = () => {};
+  private dayAcc = 0;
 
   /** Hour of the day, 0-24 (fractional). Night (sun below the horizon) has no shadows. */
   get timeOfDay(): number {
@@ -349,6 +364,70 @@ export class Engine {
     return this.world?.terrain ?? null;
   }
 
+  // ---- gameplay hooks (see src/ui/gameController.ts) ----------------------------------------------------------
+  private frameHooks: Array<(dt: number) => void> = [];
+
+  /** Adds gameplay content to the scene (identity transforms, drawn with the map). */
+  addToScene(object: THREE.Object3D): void {
+    this.scene.add(object);
+  }
+
+  /** Called every frame after the camera update, before the world and the scene are drawn. */
+  addFrameHook(hook: (dt: number) => void): void {
+    this.frameHooks.push(hook);
+  }
+
+  /** Cinematic camera on / off (pause menu). `seed` fixes the sequence of shots; `subjects` picks what to film. */
+  setCinematic(on: boolean, seed = 1, subjects?: CinematicCamera['subjects']): void {
+    if (subjects) this.cinematic.subjects = subjects;
+    if (on && !this.cinematic.active) this.cinematic.start(seed);
+    else if (!on) this.cinematic.stop();
+  }
+
+  get cinematicActive(): boolean {
+    return this.cinematic.active;
+  }
+
+  /** Camera input on / off (off while a start / pause / game over menu is up). */
+  set cameraEnabled(v: boolean) {
+    this.controller.enabled = v;
+  }
+  get cameraEnabled(): boolean {
+    return this.controller.enabled;
+  }
+
+  /** Lighting environment (sun, ambient, fog LUTs) for materials of gameplay content. */
+  get environment(): Environment {
+    return this.env;
+  }
+
+  /** Registers a game material so it follows the map's per-frame fog / haze uniforms (see World.addFogMaterial). */
+  addFogMaterial(m: THREE.ShaderMaterial): void {
+    this.world?.addFogMaterial(m);
+  }
+
+  removeFogMaterial(m: THREE.ShaderMaterial): void {
+    this.world?.removeFogMaterial(m);
+  }
+
+  get canvas(): HTMLCanvasElement {
+    return this.renderer.domElement;
+  }
+
+  /** The game camera (for picking rays and projecting entities to the screen). */
+  get viewCamera(): THREE.PerspectiveCamera {
+    return this.camera;
+  }
+
+  heightAt(x: number, z: number): number {
+    return this.world?.heightAt(x, z) ?? 0;
+  }
+
+  /** Moves the camera focus to a ground point (keeps yaw / pitch / distance). */
+  focusOn(x: number, z: number): void {
+    this.cameraView = { ...this.cameraView, x, z };
+  }
+
   /**
    * Generates and shows a map. Generation runs in a worker and streams into the render pipeline: the map builds
    * up on screen stage by stage (see `onProgress`); resolves with its summary once everything is built.
@@ -396,6 +475,7 @@ export class Engine {
   /** Camera bounds for a new map; the view carries over between maps (the first map starts at the restored or default view). */
   private placeCamera(meta: TerrainMeta): void {
     this.controller.bound = meta.playSize / 2;
+    this.cinematic.setBound(meta.playSize / 2);
     if (!this.hasMap && this.pendingView) this.controller.view = this.pendingView;
     else if (!this.hasMap) this.controller.reset();
     else this.controller.view = this.controller.view; // re-clamp; the focus follows the ground as it streams in
@@ -448,10 +528,28 @@ export class Engine {
       profiler.beginFrame();
       this.renderer.info.reset(); // counters are per frame (autoReset is off, see setupProfiler)
       this.timer.update(time);
-      const dt = Math.min(this.timer.getDelta(), 0.1);
-      profiler.scope('frame', 'camera controller', () => this.controller.update(dt));
-      const focus = this.frozen?.focus ?? this.controller.target;
-      const distance = this.frozen?.distance ?? this.controller.distance;
+      const rawDt = this.timer.getDelta();
+      const dt = Math.min(rawDt, 0.1);
+      if (this.dayCycle) {
+        // Real time (not the clamped frame delta): slow frames must not slow the clock. A hidden tab's long gap is capped at 5 s.
+        // Applied in ~0.1 s steps (the setter re-lights everything; its atmosphere / sprite re-bakes are throttled by sun movement).
+        this.dayAcc += Math.min(rawDt, 5) * this.dayCycleSpeed;
+        if (this.dayAcc >= 0.1 * this.dayCycleSpeed) {
+          this.timeOfDay = (this.hour + (24 * this.dayAcc) / DAY_LENGTH_SECONDS) % 24;
+          this.dayAcc = 0;
+          this.onTimeOfDay(this.hour);
+        }
+      }
+      profiler.scope('frame', 'camera controller', () => {
+        // The cinematic camera (pause menu) replaces the RTS controller while active; its fade overlay always ticks.
+        this.cinematic.setOverview(this.loading !== null); // far overview while a map generates / builds
+        this.cinematic.update(dt);
+        if (!this.cinematic.active) this.controller.update(dt);
+      });
+      if (this.frameHooks.length) profiler.scope('game', 'game update + layer', () => { for (const h of this.frameHooks) h(dt); });
+      // Culling / LOD / build order follow whatever the camera looks at.
+      const focus = this.frozen?.focus ?? (this.cinematic.active ? this.cinematic.target : this.controller.target);
+      const distance = this.frozen?.distance ?? (this.cinematic.active ? this.cinematic.distance : this.controller.distance);
       profiler.scope('build', 'world.step (jobs + scene sync)', () => this.world?.step(BUILD_BUDGET_MS, focus));
       profiler.scope('frame', 'progress report (UI callback)', () => this.reportProgress());
       profiler.scope('update', 'world.update (uniforms, lamps)', () => this.world?.update(this.timer.getElapsed(), this.frozen?.camera ?? this.camera));

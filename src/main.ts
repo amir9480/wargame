@@ -1,5 +1,8 @@
 import Alpine from 'alpinejs';
 import './style.css';
+import './ui/hud.css';
+import { GameController } from './ui/gameController.ts';
+import { registerHud } from './ui/hud.ts';
 import { Engine, type LoadProgress, type MapInfo } from './engine.ts';
 import { normalizeSeed, MAX_SEED } from './core/rng.ts';
 import { DEFAULT_HOUR } from './render/timeOfDay.ts';
@@ -20,6 +23,8 @@ interface Saved {
   camera: CameraView | null;
   /** Control panel folded to its title bar. */
   collapsed: boolean;
+  /** Day / night cycle running (default) or held at `hour`. */
+  cycle: boolean;
 }
 
 function isCameraView(v: unknown): v is CameraView {
@@ -30,7 +35,7 @@ function isCameraView(v: unknown): v is CameraView {
 
 /** localStorage can be missing, full or blocked: every access is guarded and falls back to the defaults. */
 function loadSaved(): Saved {
-  const saved: Saved = { seed: DEFAULT_SEED, hour: DEFAULT_HOUR, quality: DEFAULT_QUALITY, camera: null, collapsed: false };
+  const saved: Saved = { seed: DEFAULT_SEED, hour: DEFAULT_HOUR, quality: DEFAULT_QUALITY, camera: null, collapsed: false, cycle: true };
   try {
     const raw = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '{}');
     if (typeof raw.seed === 'number' && Number.isFinite(raw.seed)) saved.seed = normalizeSeed(raw.seed);
@@ -38,6 +43,7 @@ function loadSaved(): Saved {
     if (isQuality(raw.quality)) saved.quality = raw.quality;
     if (isCameraView(raw.camera)) saved.camera = raw.camera;
     if (typeof raw.collapsed === 'boolean') saved.collapsed = raw.collapsed;
+    if (typeof raw.cycle === 'boolean') saved.cycle = raw.cycle;
   } catch {
     // keep the defaults
   }
@@ -90,9 +96,11 @@ let engineError = '';
 try {
   engine = new Engine(document.getElementById('viewport')!, saved.quality);
   engine.timeOfDay = saved.hour;
+  // Command line captures (Tauri `--hour`) want a fixed time of day.
+  engine.dayCycle = saved.cycle && !(window as unknown as { __SHOT?: unknown }).__SHOT;
   if (saved.camera) engine.cameraView = saved.camera;
-  // The camera moves every frame: save it when the page is hidden or unloaded (refresh, tab switch, close).
-  const saveCamera = () => save({ camera: engine!.cameraView });
+  // The camera and the clock move every frame: save them when the page is hidden or unloaded (refresh, tab switch, close).
+  const saveCamera = () => save({ camera: engine!.cameraView, hour: engine!.timeOfDay });
   window.addEventListener('pagehide', saveCamera);
   // Dev only: `__quality({ msaa: 2, aoSamples: 0 })` overrides fields of the current preset, to find what a preset costs.
   if (import.meta.env.DEV) {
@@ -109,6 +117,14 @@ try {
   engineError = err instanceof Error ? err.message : String(err);
   console.error(err);
 }
+
+// The game (separate from the debug panel below): controller + HUD component. The debug panel is hidden while playing (F2 shows it).
+const game = engine ? new GameController(engine) : null;
+registerHud(engine, game);
+// Dev only: handles for console / browser-driven checks.
+if (import.meta.env.DEV) (window as unknown as Record<string, unknown>).__wargame = { engine, game };
+const syncGameClass =() => document.body.classList.toggle('game-active', !!game?.active);
+setInterval(syncGameClass, 200);
 
 Alpine.data('mapPanel', () => ({
   seed: saved.seed as number | string,
@@ -129,6 +145,8 @@ Alpine.data('mapPanel', () => ({
   debugView: 'final' as DebugView,
   debugViews: DEBUG_VIEWS,
   hour: saved.hour as number | string,
+  /** Day / night cycle running (12 real minutes per game day); untick to hold the time of day. */
+  cycle: !!engine?.dayCycle,
   error: engineError,
   collapsed: saved.collapsed,
   toggleCollapsed() {
@@ -152,6 +170,10 @@ Alpine.data('mapPanel', () => ({
 
   init() {
     if (!engine) return;
+    // The start menu's "New random world" button asks for a fresh random seed (same path as the dice button).
+    window.addEventListener('wargame:new-world', () => { if (!this.busy) this.randomSeed(); });
+    // The clock slider follows the running day / night cycle.
+    engine.onTimeOfDay = (h) => { this.hour = h; };
     engine.onStats = ({ fps, drawn, total, scale, calls, triangles }) => {
       this.drawCalls = calls;
       this.triangles = triangles;
@@ -170,6 +192,7 @@ Alpine.data('mapPanel', () => ({
 
   async generate() {
     if (this.busy || !engine) return;
+    game?.stop(); // a new map ends the running game
     this.busy = true;
     const seed = normalizeSeed(this.seed);
     this.seed = seed;
@@ -187,6 +210,22 @@ Alpine.data('mapPanel', () => ({
     this.hour = value;
     if (engine) engine.timeOfDay = Number(value);
     save({ hour: Number(value) });
+  },
+
+  /** Runs / holds the day / night cycle (the slider still sets the time by hand). */
+  /** Navigation debug views (see GameController.updateNavDebug). */
+  showPaths: false,
+  walkable: 'off' as 'off' | 'foot' | 'wheeled' | 'tracked',
+  setDebugPaths() {
+    game?.setDebugPaths(this.showPaths);
+  },
+  setWalkable() {
+    game?.setWalkable(this.walkable);
+  },
+
+  setCycle() {
+    if (engine) engine.dayCycle = this.cycle;
+    save({ cycle: this.cycle, hour: Number(this.hour) });
   },
 
   get hourLabel(): string {

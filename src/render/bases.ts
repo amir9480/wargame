@@ -4,9 +4,12 @@ import type { Environment } from './world.ts';
 import baseVertex from './shaders/base.vert.glsl';
 import baseFragment from './shaders/base.frag.glsl';
 
-/** Player slot colours: red, green, blue, purple. */
-export const PLAYER_COLORS = [0xe53935, 0x43a047, 0x1e88e5, 0x8e24aa] as const;
-export const PLAYER_COLOR_NAMES = ['red', 'green', 'blue', 'purple'] as const;
+/**
+ * Player slot colours: blue (you), red, gold, purple. The one palette for everything of a player: the base build-area border here,
+ * game units / structures, selection and the HUD (render/game/gameLayer.ts re-exports it), so a base square always matches its owner.
+ */
+export const PLAYER_COLORS = [0x3b82f6, 0xe5484d, 0xf0b429, 0xa855f7] as const;
+export const PLAYER_COLOR_NAMES = ['blue', 'red', 'gold', 'purple'] as const;
 
 /** Height of the overlay above the ground (against z-fighting; the ground is flat there). */
 const LIFT = 0.3;

@@ -1,0 +1,155 @@
+/* Game HUD. Independent of the debug panel styles (.panel in style.css). */
+[x-cloak] { display: none !important; }
+
+/* While playing the debug panel is hidden; F2 / the Debug button brings it back. */
+body.game-active:not(.show-debug) .panel { display: none; }
+
+/* The debug panel stays usable over the start / pause menus (e.g. to change the map seed). */
+.panel { z-index: 25; }
+
+#selbox {
+  position: fixed;
+  display: none;
+  border: 1px solid #8dffb0;
+  background: rgba(141, 255, 176, 0.12);
+  pointer-events: none;
+  z-index: 30;
+}
+
+#hud {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 20;
+  color: #e8edf1;
+  font: 13px/1.3 system-ui, sans-serif;
+  user-select: none;
+}
+#hud button, #hud select, #hud .topbar, #hud .sidebar, #hud .minimap, #hud .card { pointer-events: auto; }
+#hud .hud-game { position: absolute; inset: 0; }
+
+#hud button {
+  background: rgba(34, 46, 58, 0.95);
+  color: inherit;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 5px;
+  padding: 5px 10px;
+  cursor: pointer;
+  font: inherit;
+}
+#hud button:hover:not(:disabled) { background: rgba(58, 78, 98, 0.98); }
+#hud button:disabled { opacity: 0.45; cursor: not-allowed; }
+#hud button.primary { background: #2d6cdf; border-color: #5b95ff; padding: 10px 18px; font-size: 15px; }
+#hud button.on, #hud button.active { outline: 2px solid #8dffb0; }
+
+.hud-menu {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: radial-gradient(ellipse at center, rgba(8, 14, 20, 0.55), rgba(8, 14, 20, 0.85));
+  pointer-events: auto;
+}
+.hud-menu.over { background: rgba(8, 14, 20, 0.6); }
+.hud-menu .card {
+  width: 380px;
+  padding: 24px 26px;
+  background: rgba(18, 24, 30, 0.95);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.card h2 { margin: 0; font-size: 26px; letter-spacing: 0.04em; }
+.card p { margin: 0; color: #b8c4cf; }
+.card small { color: #7e8c99; }
+.card label { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+
+/* Pause menu: the cinematic camera shows through; the card sits bottom-left between letterbox bars, the HUD chrome fades away. */
+.hud-menu.cine {
+  background: linear-gradient(to top, rgba(0, 0, 0, 0.55), rgba(0, 0, 0, 0) 45%);
+  place-items: end end; /* bottom-right: the debug panel lives top-left */
+  padding: 0 6vw 10vh 0;
+}
+.hud-menu.cine .card { width: 320px; background: rgba(12, 18, 24, 0.82); }
+.letterbox { position: absolute; left: 0; right: 0; height: 8vh; background: #000; }
+.letterbox.top { top: 0; }
+.letterbox.bottom { bottom: 0; }
+.hud-game .topbar, .hud-game .sidebar, .hud-game .minimap, .hud-game .help2, .hud-game .toasts { transition: opacity 0.4s; }
+.hud-game.paused .topbar, .hud-game.paused .sidebar, .hud-game.paused .minimap, .hud-game.paused .help2, .hud-game.paused .toasts {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.topbar {
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 12px;
+  background: linear-gradient(rgba(10, 16, 22, 0.92), rgba(10, 16, 22, 0.55));
+}
+.topbar .spacer { flex: 1; }
+.stat { display: flex; align-items: center; gap: 6px; font-size: 14px; }
+.stat .ico { color: #ffd36b; }
+.stat.credits b { color: #ffd36b; font-variant-numeric: tabular-nums; min-width: 56px; }
+.stat.power .meter { width: 80px; height: 8px; background: #222c35; border-radius: 4px; overflow: hidden; }
+.stat.power .meter div { height: 100%; background: #5be37f; }
+.stat.power.low .meter div { background: #ff6b5b; }
+.stat.power.low b { color: #ff8a7a; }
+.players { gap: 12px; margin-left: 8px; }
+.pl { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; }
+.pl i { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
+.pl.dead { opacity: 0.4; text-decoration: line-through; }
+
+.sidebar {
+  position: absolute;
+  top: 46px; right: 0; bottom: 0;
+  width: 270px;
+  padding: 10px 12px;
+  overflow-y: auto;
+  background: linear-gradient(90deg, rgba(10, 16, 22, 0.55), rgba(10, 16, 22, 0.93));
+  scrollbar-width: thin;
+}
+.sidebar h3 { margin: 8px 0 6px; font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; color: #8da0b1; }
+.buildgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.build { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; text-align: left; min-height: 54px; }
+.build .name { font-weight: 600; }
+.cost { color: #ffd36b; font-size: 12px; }
+.build .why { color: #ff9b8a; font-size: 10.5px; line-height: 1.1; }
+.prog { display: grid; grid-template-columns: 1fr 70px 34px; align-items: center; gap: 6px; margin: 3px 0; font-size: 12px; }
+.bar, .hp { height: 8px; background: #222c35; border-radius: 4px; overflow: hidden; }
+.bar div { height: 100%; background: #4da3ff; }
+.hp div { height: 100%; background: #5be37f; }
+.muted { color: #8da0b1; font-size: 12px; margin: 3px 0; }
+.produce { display: flex; flex-direction: column; gap: 5px; margin-top: 8px; }
+.produce button { display: flex; justify-content: space-between; }
+.produce .prog { grid-template-columns: 1fr 70px 26px; }
+.produce .x { padding: 0 6px; }
+.sell { margin-top: 8px; width: 100%; }
+
+.minimap {
+  position: absolute;
+  left: 12px; bottom: 12px;
+  width: 168px; height: 168px;
+  border: 2px solid rgba(255, 255, 255, 0.25);
+  border-radius: 4px;
+  background: #0b1218;
+  cursor: crosshair;
+}
+.minimap canvas { display: block; width: 100%; height: 100%; }
+
+.placing {
+  position: absolute;
+  top: 54px; left: 50%;
+  transform: translateX(-50%);
+  padding: 6px 14px;
+  background: rgba(20, 60, 36, 0.92);
+  border: 1px solid #5be37f;
+  border-radius: 6px;
+}
+.toasts { position: absolute; bottom: 24px; left: 50%; transform: translateX(-50%); display: flex; flex-direction: column; gap: 6px; align-items: center; }
+.toast { padding: 6px 14px; background: rgba(10, 16, 22, 0.92); border: 1px solid rgba(255, 255, 255, 0.18); border-radius: 6px; }
+.help2 { position: absolute; left: 192px; bottom: 12px; color: rgba(255, 255, 255, 0.7); font-size: 11.5px; text-shadow: 0 1px 2px #000; }

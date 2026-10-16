@@ -4,7 +4,7 @@ description: Details of player bases, cities (street grids), buildings (types, s
 ---
 
 # Player bases (`modules/bases.ts`)
-- Always 4 slots (`PLAYER_SLOTS`), clockwise from north-west; renderer colours: red, green, blue, purple.
+- Always 4 slots (`PLAYER_SLOTS`), clockwise from north-west; player colours (`render/bases.ts` `PLAYER_COLORS`, shared with game units / structures / HUD): blue (slot 0, the human), red, gold, purple.
 - Square build area, preferably 80×80 m (half = 20 cells); falls back to 72/64/56 m when land is tight. Rule sets (`RULES`) relax slope/buildable share before size; layout score = min(spacing, `TARGET_GAP`=0.4·N) + 4·half.
 - Hard exclusions inside a base: water, river (±1 cell), mountain > 3 m.
 - Fast search via summed-area tables; spread via farthest-point selection (40 random starts).

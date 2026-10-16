@@ -60,6 +60,19 @@ export class RTSCameraController {
   private rotating = false;
   private mouse = { x: 0, y: 0, inside: false, overCanvas: false };
   private ac = new AbortController();
+  private on = true;
+
+  /** False while a menu is up (start / pause / game over): keys, edge-pan, rotate and zoom are ignored and held input is released. */
+  get enabled(): boolean {
+    return this.on;
+  }
+  set enabled(v: boolean) {
+    this.on = v;
+    if (!v) {
+      this.keys.clear();
+      this.rotating = false;
+    }
+  }
 
   constructor(camera: THREE.PerspectiveCamera, dom: HTMLElement, opts: RTSCameraOptions) {
     this.camera = camera;
@@ -106,7 +119,7 @@ export class RTSCameraController {
     const dom = this.dom;
 
     window.addEventListener('keydown', (e) => {
-      if (isTyping(e.target)) return;
+      if (!this.on || isTyping(e.target)) return;
       this.shift = e.shiftKey;
       const action = KEYMAP[e.code];
       if (action) {
@@ -132,7 +145,7 @@ export class RTSCameraController {
       this.mouse.y = e.clientY;
       this.mouse.inside = true;
       this.mouse.overCanvas = e.target === dom;
-      if (this.rotating) {
+      if (this.rotating && this.on) {
         this.yaw -= e.movementX * 0.005;
         this.pitch = clamp(this.pitch + e.movementY * 0.004, this.minPitch, this.maxPitch);
       }
@@ -143,7 +156,7 @@ export class RTSCameraController {
     }, { signal });
 
     dom.addEventListener('pointerdown', (e) => {
-      if (e.button !== 1) return;
+      if (e.button !== 1 || !this.on) return;
       e.preventDefault(); // stop browser middle-click autoscroll
       this.rotating = true;
       dom.setPointerCapture(e.pointerId);
@@ -161,6 +174,7 @@ export class RTSCameraController {
 
     dom.addEventListener('wheel', (e) => {
       e.preventDefault();
+      if (!this.on) return;
       const delta = e.deltaMode === WheelEvent.DOM_DELTA_LINE ? e.deltaY * 16 : e.deltaY;
       this.targetDistance = clamp(this.targetDistance * Math.exp(delta * 0.0012), this.minDistance, this.maxDistance);
     }, { signal, passive: false });
@@ -175,7 +189,7 @@ export class RTSCameraController {
     if (this.keys.has('left')) mx -= 1;
     if (this.keys.has('right')) mx += 1;
 
-    if (this.mouse.inside && this.mouse.overCanvas && !this.rotating) {
+    if (this.on && this.mouse.inside && this.mouse.overCanvas && !this.rotating) {
       const m = this.edgeMargin;
       if (this.mouse.x < m) mx -= 1;
       if (this.mouse.x > window.innerWidth - m) mx += 1;

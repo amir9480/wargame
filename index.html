@@ -70,6 +70,10 @@
         <span>Time of day <b x-text="hourLabel"></b></span>
         <input type="range" min="0" max="24" step="0.01" x-model="hour" @input="setHour($event.target.value)" />
       </label>
+      <label class="detail" title="The clock advances by itself: 12 real minutes = one 24-hour game day. Untick to freeze the time of day (the slider always sets it by hand).">
+        <input type="checkbox" x-model="cycle" @change="setCycle()" />
+        <span>Day / night cycle (12 min = 24 h)</span>
+      </label>
 
       <label class="select">
         <span>Graphics quality</span>
@@ -80,6 +84,22 @@
           <option value="ultra">Ultra</option>
         </select>
       </label>
+
+      <div class="navdebug" x-show="info">
+        <label class="detail" title="Draws the A* route (waypoints) every AI unit is following, in its player colour, with a post at the destination.">
+          <input type="checkbox" x-model="showPaths" @change="setDebugPaths()" />
+          <span>Show AI paths (A* routes)</span>
+        </label>
+        <label class="select" title="Very faint overlay of where units of a class can go. Green walkable, cyan road, yellow rough ground / light forest, red blocked.">
+          <span>Walkable layer</span>
+          <select x-model="walkable" @change="setWalkable()">
+            <option value="off">Off</option>
+            <option value="foot">Infantry</option>
+            <option value="wheeled">Wheeled vehicles</option>
+            <option value="tracked">Tracked (tanks)</option>
+          </select>
+        </label>
+      </div>
 
       <label class="select">
         <span>Debug view</span>
@@ -120,6 +140,124 @@
       </p>
       </div>
     </aside>
+
+    <!-- Game HUD: separate from the debug panel above (F2 or the Debug button toggles that panel while playing). -->
+    <div id="selbox"></div>
+    <div id="hud" x-data="gameHud" x-cloak>
+      <!-- main menu -->
+      <div class="hud-menu cine" x-show="!s.active">
+        <div class="letterbox top"></div><div class="letterbox bottom"></div>
+        <div class="card">
+          <h2>Wargame</h2>
+          <p>Skirmish: you (blue) against three AI commanders. Build a base, produce an army, destroy every enemy structure.</p>
+          <label>AI difficulty
+            <select x-model="level">
+              <option value="easy">Easy</option>
+              <option value="normal">Normal</option>
+              <option value="hard">Hard</option>
+            </select>
+          </label>
+          <button class="primary" :disabled="!ready" @click="start()" x-text="ready ? 'Start game' : 'Generating map…'"></button>
+          <button :disabled="!ready" @click="newWorld()" title="Generate a new map with a random seed">🎲 New random world</button>
+          <small x-text="seed !== null ? `World seed ${seed} · the seed can also be typed in the debug panel` : 'Generating the world…'"></small>
+        </div>
+      </div>
+
+      <template x-if="s.active">
+        <div class="hud-game" :class="{ paused: s.paused && !s.gameOver }">
+          <!-- top bar -->
+          <div class="topbar">
+            <div class="stat credits" title="Credits"><span class="ico">$</span><b x-text="s.credits.toLocaleString()"></b></div>
+            <div class="stat power" :class="{ low: s.power.factor < 1 }" title="Power produced / needed. Under 100% production and construction slow down.">
+              <span class="ico">⚡</span><b x-text="`${s.power.produced} / ${s.power.consumed}`"></b>
+              <div class="meter"><div :style="`width:${powerPct}%`"></div></div>
+            </div>
+            <div class="stat" x-text="s.clock"></div>
+            <div class="stat players">
+              <template x-for="p in s.players" :key="p.slot">
+                <span class="pl" :class="{ dead: !p.alive }" :title="`${p.name}: ${p.structures} structures, ${p.units} units`"><i :style="`background:${p.color}`"></i><span x-text="p.name"></span></span>
+              </template>
+            </div>
+            <div class="spacer"></div>
+            <button @click="pause()" x-text="s.paused ? '▶' : '⏸'" title="Pause (P)"></button>
+            <button @click="speed(s.speed === 1 ? 2 : s.speed === 2 ? 4 : 1)" x-text="`${s.speed}×`" title="Game speed"></button>
+            <button @click="home()" title="Jump to your base (H)">⌂</button>
+            <button @click="toggleDebug()" :class="{ on: debug }" title="Debug panel (F2)">Debug</button>
+            <button @click="quit()" title="Quit to menu">✕</button>
+          </div>
+
+          <!-- build sidebar -->
+          <aside class="sidebar">
+            <h3>Build</h3>
+            <div class="buildgrid">
+              <template x-for="b in s.structures" :key="b.id">
+                <button class="build" :disabled="!b.enabled" :title="b.why || b.label" @click="build(b.id)" :class="{ active: s.placing === b.label }">
+                  <span class="name" x-text="b.label"></span>
+                  <span class="cost" x-text="`$${b.cost}`"></span>
+                  <span class="why" x-show="b.why" x-text="b.why"></span>
+                </button>
+              </template>
+            </div>
+            <template x-if="s.constructing.length">
+              <div class="constructing">
+                <h3>Under construction</h3>
+                <template x-for="c in s.constructing" :key="c.id">
+                  <div class="prog"><span x-text="c.label"></span><div class="bar"><div :style="`width:${Math.round(c.progress * 100)}%`"></div></div><b x-text="`${Math.round(c.progress * 100)}%`"></b></div>
+                </template>
+              </div>
+            </template>
+
+            <template x-if="s.selection">
+              <div class="selection">
+                <h3 x-text="s.selection.label"></h3>
+                <div class="hp"><div :style="`width:${Math.round(100 * s.selection.hp / s.selection.maxHp)}%`"></div></div>
+                <div class="muted" x-show="s.selection.count === 1" x-text="`HP ${s.selection.hp} / ${s.selection.maxHp}`"></div>
+                <template x-if="s.produce.length">
+                  <div class="produce">
+                    <template x-for="u in s.produce" :key="u.unit">
+                      <button :disabled="!u.enabled" @click="unit(s.selection.id, u.unit)"><span x-text="u.label"></span><span class="cost" x-text="`$${u.cost}`"></span></button>
+                    </template>
+                    <div class="prog" x-show="s.queue">
+                      <span x-text="s.queue ? `${s.queue.label}${s.queue.queued ? ' +' + s.queue.queued : ''}` : ''"></span>
+                      <div class="bar"><div :style="`width:${Math.round((s.queue ? s.queue.progress : 0) * 100)}%`"></div></div>
+                      <button class="x" @click="cancelQueue(s.selection.id)" title="Cancel last order (refund)">✕</button>
+                    </div>
+                  </div>
+                </template>
+                <button class="sell" x-show="s.selection.structure && s.selection.label.indexOf('Enemy') !== 0" @click="sell()">Sell (Del)</button>
+              </div>
+            </template>
+          </aside>
+
+          <!-- minimap -->
+          <div class="minimap" @click="minimap($event)"><canvas x-ref="minimap" width="168" height="168"></canvas></div>
+
+          <div class="placing" x-show="s.placing"><span x-text="`Placing ${s.placing} · click to build · right-click / Esc to cancel · Shift keeps placing`"></span></div>
+          <div class="toasts"><template x-for="t in s.toasts" :key="t.id"><div class="toast" x-text="t.text"></div></template></div>
+          <div class="help2">LMB select / drag box · RMB move / attack · Ctrl+1-9 groups · H base · P pause · F2 debug</div>
+
+          <div class="hud-menu cine" x-show="s.paused && !s.gameOver">
+            <div class="letterbox top"></div><div class="letterbox bottom"></div>
+            <div class="card">
+              <h2>Paused</h2>
+              <button class="primary" @click="pause()">Resume</button>
+              <button @click="home(); pause()">Resume at my base</button>
+              <button @click="toggleDebug()" x-text="debug ? 'Hide debug panel' : 'Show debug panel'"></button>
+              <button @click="quit()">Quit to menu</button>
+              <small>Esc or P also resumes. A cinematic camera films the battlefield while paused.</small>
+            </div>
+          </div>
+
+          <div class="hud-menu over" x-show="s.gameOver">
+            <div class="card">
+              <h2 x-text="s.gameOver === 'won' ? 'Victory' : 'Defeat'"></h2>
+              <p x-text="s.gameOver === 'won' ? 'All enemy commanders are destroyed.' : 'Your base has fallen.'"></p>
+              <button class="primary" @click="quit()">Back to menu</button>
+            </div>
+          </div>
+        </div>
+      </template>
+    </div>
 
     <script type="module" src="/src/main.ts"></script>
   </body>

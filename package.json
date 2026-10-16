@@ -11,12 +11,14 @@
     "build": "pnpm textures:ensure && tsc --noEmit && vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
+    "sim-check": "node scripts/sim-check.ts",
     "tauri": "tauri",
     "app:dev": "tauri dev",
     "app:build": "tauri build"
   },
   "dependencies": {
     "alpinejs": "^3.17.4",
+    "jolt-physics": "^1.1.0",
     "three": "^0.186.1"
   },
   "devDependencies": {
