@@ -2,6 +2,8 @@ import { defineConfig } from 'vite';
 import glsl from 'vite-plugin-glsl';
 
 export default defineConfig({
+  // Relative asset URLs so the build works from any sub-path (GitHub Pages serves it under /<repo>/).
+  base: './',
   plugins: [
     // Resolves `#include path/to/chunk.glsl;` in shaders. Three.js `#include <chunk>` is left alone.
     glsl({ watch: true }),
