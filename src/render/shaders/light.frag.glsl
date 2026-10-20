@@ -21,7 +21,6 @@ vec3 worldAt(vec2 uv, float d) {
 
 void main() {
   vec2 uv = gl_FragCoord.xy / lightResolution;
-  if (!townKeep(uv * resolution)) discard; // a town's detailed lights give way to its city model's, per pixel (townkeep.glsl)
   float d0 = texture2D(tDepth, uv).r;
   if (d0 >= 1.0) discard;
   vec3 P = worldAt(uv, d0);
@@ -54,5 +53,6 @@ void main() {
   float falloff = (1.0 - x * x) * (1.0 - x * x) / (1.0 + 4.0 * x * x);
   float fog = fogFade(P);
 
-  gl_FragColor = vec4(vColor * (falloff * ndl * spot * (1.0 - fog)), 1.0);
+  // Lights add up, so the hand-over to the overlay pool / city model's light is a smooth brightness cross-fade (no dither noise).
+  gl_FragColor = vec4(vColor * (falloff * ndl * spot * (1.0 - fog) * lightShare()), 1.0);
 }

@@ -35,6 +35,7 @@ export interface HudState {
   clock: string;
   paused: boolean;
   speed: number;
+  debugMode: boolean;
 }
 
 const hex = (c: number): string => '#' + c.toString(16).padStart(6, '0');
@@ -74,10 +75,23 @@ export class GameController {
 
   get active(): boolean { return this.session !== null; }
 
+  // ---- mode (game / debug view) -------------------------------------------------------------------------------
+  /** Debug mode: view-only map (no session, no HUD / start menu, free RTS camera, debug panel always shown). */
+  debugMode = false;
+  /** Called with the new mode when it changes by user action (main.ts persists it). */
+  onModeChange: ((mode: 'game' | 'debug') => void) | null = null;
+
+  setDebugMode(on: boolean, persist = true): void {
+    if (on) this.stop();
+    this.debugMode = on;
+    document.body.classList.toggle('debug-mode', on);
+    if (persist) this.onModeChange?.(on ? 'debug' : 'game');
+  }
+
   // ---- lifecycle ----------------------------------------------------------------------------------------------
   start(level: 'easy' | 'normal' | 'hard'): boolean {
     const terrain = this.engine.terrain;
-    if (!terrain) return false;
+    if (!terrain || this.debugMode) return false;
     this.stop();
     this.session = new GameSession(terrain, level);
     // units are drawn at the sim's standing height (bridge decks included), not the bare terrain
@@ -200,7 +214,7 @@ export class GameController {
     // The running game's grid (it includes player structures); otherwise a grid built just for the overlay.
     const nav = session?.world.nav ?? (this.walkable !== 'off' ? (this.cachedNav ??= new NavGrid(terrain)) : null);
     this.navDebug.setWalkable(this.walkable, nav);
-    this.navDebug.updatePaths(this.debugPaths, session, (owner) => owner !== (session?.human ?? 0), dt);
+    this.navDebug.updatePaths(this.debugPaths, session, () => true, dt);
   }
 
   private frame(dt: number): void {
@@ -208,9 +222,9 @@ export class GameController {
     this.updateNavDebug(dt);
     // Behind the start menu (once the map is built) and the pause menu a cinematic camera replaces the RTS camera.
     const terrain = this.engine.terrain;
-    const cine = !!terrain && (!session || (session.paused && session.gameOver === null));
+    const cine = !!terrain && !this.debugMode && (!session || (session.paused && session.gameOver === null));
     if (cine !== this.engine.cinematicActive) this.engine.setCinematic(cine, hash32(terrain?.seed ?? 1, session?.client.tick ?? 0), this.pickSubject);
-    this.engine.cameraEnabled = !this.menuOpen; // no panning / rotating / zooming behind a menu
+    this.engine.cameraEnabled = this.debugMode || !this.menuOpen; // no panning / rotating / zooming behind a menu
     if (!session || !this.layer) return;
     session.update(dt);
     const c = session.client;
@@ -479,6 +493,7 @@ export class GameController {
     const empty: HudState = {
       active: false, credits: 0, power: { produced: 0, consumed: 0, factor: 1 }, structures: [], constructing: [], selection: null, produce: [],
       queue: null, placing: '', toasts: [], gameOver: null, players: [], clock: '', paused: false, speed: 1,
+      debugMode: this.debugMode,
     };
     if (!session) return empty;
     const c = session.client;
@@ -539,6 +554,7 @@ export class GameController {
       clock: `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')}`,
       paused: session.paused,
       speed: session.speed,
+      debugMode: this.debugMode,
     };
   }
 

@@ -30,9 +30,20 @@ import wireFragment from './shaders/wire.frag.glsl';
 const LOD = {
   site: { near: 450, far: 0 },
   pylon: { near: 350, far: 2000 },
-  pole: { near: 220, far: 900 },
+  /** Utility poles have no far mesh: beyond `near` the pole is simply not drawn. */
+  pole: { near: 220, far: 0 },
 } as const;
 type Category = keyof typeof LOD;
+
+/**
+ * Wires only exist close to the camera: they dither out (wire.frag, noise fade) from `fade` to `gone` and their chunk meshes are
+ * culled beyond `cull` (a chunk's centre distance, so a chunk's worth of slack past `gone`). No far wire meshes at all.
+ */
+const WIRE_RANGE = {
+  pylon: { fade: 250, gone: 1100, cull: 1200 },
+  pole: { fade: 90, gone: 240, cull: 320 },
+} as const;
+const wireRange = (cat: Category) => (cat === 'pole' ? WIRE_RANGE.pole : WIRE_RANGE.pylon);
 
 /** Yard lamps are on from dusk to dawn (same curve as the street lights); the stack beacons keep a day level. */
 const ON_DAYLIGHT = 0.65;
@@ -66,7 +77,11 @@ const POLE_SAG_K = 1400;
 export class PowerLayer {
   readonly group = new THREE.Group();
   readonly material: THREE.ShaderMaterial;
-  private readonly wireMaterial: THREE.ShaderMaterial;
+  private readonly wireMaterials: { pylon: THREE.ShaderMaterial; pole: THREE.ShaderMaterial };
+  /** Every material that needs the per-frame fog / game-camera uniforms (World.update). */
+  get materials(): THREE.ShaderMaterial[] {
+    return [this.material, this.wireMaterials.pylon, this.wireMaterials.pole];
+  }
   private lamps: LightGroup;
   private beacons: LightGroup;
   private level = -1;
@@ -89,12 +104,13 @@ export class PowerLayer {
       },
     });
     // Shares the uniforms object, so the per-frame fog updates on `material` reach the wires too.
-    this.wireMaterial = new THREE.ShaderMaterial({
+    const wireMaterial = (r: { fade: number; gone: number }) => new THREE.ShaderMaterial({
       vertexShader: wireVertex,
       fragmentShader: wireFragment,
       vertexColors: true,
-      uniforms: this.material.uniforms,
+      uniforms: { ...this.material.uniforms, wireFade: { value: new THREE.Vector2(r.fade, r.gone) } },
     });
+    this.wireMaterials = { pylon: wireMaterial(WIRE_RANGE.pylon), pole: wireMaterial(WIRE_RANGE.pole) };
     this.lamps = field.createGroup();
     this.beacons = field.createGroup(false, true);
     // Halos at full strength before the near meshes give way (see CLAUDE.md, light halos).
@@ -110,7 +126,7 @@ export class PowerLayer {
     const ground = (x: number, z: number) => sampleGrid(terrain.heights, terrain.size, (x + half) / terrain.cell, (z + half) / terrain.cell);
 
     // One near and one far buffer per category and chunk.
-    const bins = new Map<string, { near: MeshData; far: MeshData; wnear: MeshData; wfar: MeshData; key: number; cat: Category }>();
+    const bins = new Map<string, { near: MeshData; far: MeshData; wires: MeshData; key: number; cat: Category }>();
     const bin = (cat: Category, x: number, z: number) => {
       const key = grid.key(x, z);
       const id = `${cat}:${key}`;
@@ -122,21 +138,19 @@ export class PowerLayer {
           return m;
         };
         const makeWire = () => new MeshData({ aThick: 1 });
-        bins.set(id, (b = { near: make(), far: make(), wnear: makeWire(), wfar: makeWire(), key, cat }));
+        bins.set(id, (b = { near: make(), far: make(), wires: makeWire(), key, cat }));
       }
       return b;
     };
-    /** Like `draw`, into the chunk's wire meshes (own shader: wires fade out with distance instead of aliasing). */
+    /** Like `draw`, into the chunk's wire mesh (own shader: wires fade out with distance instead of aliasing; near only). */
     const drawWire = (cat: Category, x: number, z: number, fn: (m: MeshData, far: boolean) => void) => {
-      const b = bin(cat, x, z);
-      fn(b.wnear, false);
-      fn(b.wfar, true);
+      fn(bin(cat, x, z).wires, false);
     };
-    /** Draws into both levels of detail of the category's chunk at (x, z). */
+    /** Draws into both levels of detail of the category's chunk at (x, z); poles have no far level. */
     const draw = (cat: Category, x: number, z: number, fn: (m: MeshData, far: boolean) => void) => {
       const b = bin(cat, x, z);
       fn(b.near, false);
-      fn(b.far, true);
+      if (LOD[cat].far || cat === 'site') fn(b.far, true);
     };
 
     const lampDefs: LightDef[] = [], beaconDefs: LightDef[] = [];
@@ -185,7 +199,8 @@ export class PowerLayer {
           a.forEach((p, s) => wire(m, p, b[s], PYLON_SAG_K, s === 6 ? 0.05 : 0.08, far));
         });
         // Aerial marker balls on the top (earth) wire, alternating orange and white.
-        draw('pylon', mx, mz, (m, far) => markerBalls(m, a[6], b[6], PYLON_SAG_K, far));
+        // In the wire meshes, so they fade and cull with the wires (never visible without them).
+        drawWire('pylon', mx, mz, (m, far) => markerBalls(m, a[6], b[6], PYLON_SAG_K, far));
       }
       // The end pylons' conductors run to the sites' gantries.
       for (const [pylon, site] of [[ps[0], sites[line.a]], [ps[ps.length - 1], sites[line.b]]] as const) {
@@ -234,12 +249,14 @@ export class PowerLayer {
     for (const b of bins.values()) {
       const lod = LOD[b.cat];
       const center = grid.center(b.key);
-      for (const [far, wires] of [[false, false], [true, false], [false, true], [true, true]] as const) {
-        const m = wires ? (far ? b.wfar : b.wnear) : far ? b.far : b.near;
+      for (const [far, wires] of [[false, false], [true, false], [false, true]] as const) {
+        const m = wires ? b.wires : far ? b.far : b.near;
         if (!m.vertexCount) continue;
-        const mesh = new THREE.Mesh(m.toGeometry(), wires ? this.wireMaterial : this.material);
+        const mesh = new THREE.Mesh(m.toGeometry(), wires ? this.wireMaterials[b.cat === 'pole' ? 'pole' : 'pylon'] : this.material);
         mesh.userData.lodCenter = center;
-        if (far) {
+        if (wires) {
+          mesh.userData.lodMax = wireRange(b.cat).cull;
+        } else if (far) {
           mesh.userData.lodMin = lod.near;
           if (lod.far) mesh.userData.lodMax = lod.far;
         } else {
@@ -307,6 +324,7 @@ function markerBalls(m: MeshData, a: V3, b: V3, sagK: number, far: boolean): voi
   if (count < 1) return;
   const sag = (len * len) / sagK;
   m.frame(0, 0, 0, 0);
+  m.cur.aThick = [MARKER_RADIUS * 2]; // wire mesh attribute: the ball's size drives the distance fade
   const lat = far ? 3 : 6, lon = far ? 5 : 10, r = far ? MARKER_RADIUS * 1.5 : MARKER_RADIUS;
   for (let k = 0; k < count; k++) {
     const f = 0.5 + (k - (count - 1) / 2) * (MARKER_SPACING / len);

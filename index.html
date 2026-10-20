@@ -58,6 +58,8 @@
         <dt>Triangles</dt><dd x-text="triangles ? triangles.toLocaleString() : ''"></dd>
       </dl>
 
+      <button type="button" class="debug-only" @click="backToGame()" title="Leave the view-only debug mode and return to the start menu">🎮 Back to game mode</button>
+
       <div class="buttons" x-show="info">
         <button type="button" @click="destroySome()" title="Destroy a random tenth of the standing buildings">💥 Destroy some</button>
         <button type="button" @click="repairAll()" :disabled="!destroyed">Repair all</button>
@@ -86,9 +88,9 @@
       </label>
 
       <div class="navdebug" x-show="info">
-        <label class="detail" title="Draws the A* route (waypoints) every AI unit is following, in its player colour, with a post at the destination.">
+        <label class="detail" title="Draws the A* route (waypoints) every unit (yours and the AI's) is following, in its player colour, with a post at the destination.">
           <input type="checkbox" x-model="showPaths" @change="setDebugPaths()" />
-          <span>Show AI paths (A* routes)</span>
+          <span>Show unit paths (A* routes)</span>
         </label>
         <label class="select" title="Very faint overlay of where units of a class can go. Green walkable, cyan road, yellow rough ground / light forest, red blocked.">
           <span>Walkable layer</span>
@@ -145,19 +147,25 @@
     <div id="selbox"></div>
     <div id="hud" x-data="gameHud" x-cloak>
       <!-- main menu -->
-      <div class="hud-menu cine" x-show="!s.active">
+      <div class="hud-menu cine" x-show="!s.active && !s.debugMode">
         <div class="letterbox top"></div><div class="letterbox bottom"></div>
         <div class="card">
           <h2>Wargame</h2>
           <p>Skirmish: you (blue) against three AI commanders. Build a base, produce an army, destroy every enemy structure.</p>
-          <label>AI difficulty
+          <label>Mode
+            <select x-model="mode">
+              <option value="game">Game</option>
+              <option value="debug">Debug view (no game)</option>
+            </select>
+          </label>
+          <label x-show="mode === 'game'">AI difficulty
             <select x-model="level">
               <option value="easy">Easy</option>
               <option value="normal">Normal</option>
               <option value="hard">Hard</option>
             </select>
           </label>
-          <button class="primary" :disabled="!ready" @click="start()" x-text="ready ? 'Start game' : 'Generating map…'"></button>
+          <button class="primary" :disabled="!ready" @click="start()" x-text="!ready ? 'Generating map…' : mode === 'debug' ? 'Enter debug view' : 'Start game'"></button>
           <button :disabled="!ready" @click="newWorld()" title="Generate a new map with a random seed">🎲 New random world</button>
           <small x-text="seed !== null ? `World seed ${seed} · the seed can also be typed in the debug panel` : 'Generating the world…'"></small>
         </div>

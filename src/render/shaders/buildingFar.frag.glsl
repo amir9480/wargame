@@ -59,8 +59,8 @@ void main() {
     float floorI = floor(vFacade.y / fh);
     float fy = vFacade.y - floorI * fh;
     // From afar the windows shrink (more wall between them), or the lit panes of a big block merge into one bright slab.
-    float farK = smoothstep(farShrinkStart, farShrinkStart + FAR_SHRINK_SPAN, distance(cameraPosition, vWorldPos));
-    float haloK = smoothstep(FAR_HALO_START, FAR_HALO_END, distance(cameraPosition, vWorldPos));
+    float farK = smoothstep(farShrinkStart, farShrinkStart + FAR_SHRINK_SPAN, distance(fogOrigin, vWorldPos));
+    float haloK = smoothstep(FAR_HALO_START, FAR_HALO_END, distance(fogOrigin, vWorldPos));
     float inset = farK * FAR_SHRINK_INSET * min(vGrid.z, vGrid.y);
     vec2 d = vec2(max(abs(vFacade.x - centre) - vGrid.z * 0.5 + inset, 0.0), max(max(vGrid.x + inset - fy, fy - vGrid.x - vGrid.y + inset), 0.0));
     float dist = length(d);
@@ -82,7 +82,7 @@ void main() {
     glow = isLit * (win + 0.35 * (1.0 - haloK) * exp(-dist * 1.8) * (1.0 - win));
     glow *= 1.0 - 0.3 * farK; // dimmer from afar too
     // Each lit window twinkles on its own, from afar only (see twinkleFar).
-    glow *= twinkleFar(key + vec3(0.0, 0.0, vSeed * 97.0), time, distance(cameraPosition, vWorldPos));
+    glow *= twinkleFar(key + vec3(0.0, 0.0, vSeed * 97.0), time, distance(fogOrigin, vWorldPos));
   }
   col = mix(col, vGlass, win);
   vec3 lit = col * (ambient + sunColor * ndl);

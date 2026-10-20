@@ -19,7 +19,7 @@ vec2 townFade() {
   if (t < 0) {
 #ifdef LIGHT_SWITCH
     if (lightSwitch.x > 0.0) {
-      float pool = smoothstep(lightSwitch.x - lightSwitch.y, lightSwitch.x + lightSwitch.y, distance(cameraPosition, (modelMatrix * instanceMatrix)[3].xyz));
+      float pool = smoothstep(lightSwitch.x - lightSwitch.y, lightSwitch.x + lightSwitch.y, distance(fogOrigin, (modelMatrix * instanceMatrix)[3].xyz));
       return LIGHT_SWITCH > 0.0 ? vec2(1.0 - pool, 1.0) : vec2(pool, -1.0);
     }
 #endif

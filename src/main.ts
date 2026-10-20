@@ -25,6 +25,8 @@ interface Saved {
   collapsed: boolean;
   /** Day / night cycle running (default) or held at `hour`. */
   cycle: boolean;
+  /** `game` = skirmish with start menu; `debug` = view-only map without game logic. */
+  mode: 'game' | 'debug';
 }
 
 function isCameraView(v: unknown): v is CameraView {
@@ -35,7 +37,7 @@ function isCameraView(v: unknown): v is CameraView {
 
 /** localStorage can be missing, full or blocked: every access is guarded and falls back to the defaults. */
 function loadSaved(): Saved {
-  const saved: Saved = { seed: DEFAULT_SEED, hour: DEFAULT_HOUR, quality: DEFAULT_QUALITY, camera: null, collapsed: false, cycle: true };
+  const saved: Saved = { seed: DEFAULT_SEED, hour: DEFAULT_HOUR, quality: DEFAULT_QUALITY, camera: null, collapsed: false, cycle: true, mode: 'game' };
   try {
     const raw = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '{}');
     if (typeof raw.seed === 'number' && Number.isFinite(raw.seed)) saved.seed = normalizeSeed(raw.seed);
@@ -44,6 +46,7 @@ function loadSaved(): Saved {
     if (isCameraView(raw.camera)) saved.camera = raw.camera;
     if (typeof raw.collapsed === 'boolean') saved.collapsed = raw.collapsed;
     if (typeof raw.cycle === 'boolean') saved.cycle = raw.cycle;
+    if (raw.mode === 'game' || raw.mode === 'debug') saved.mode = raw.mode;
   } catch {
     // keep the defaults
   }
@@ -120,6 +123,10 @@ try {
 
 // The game (separate from the debug panel below): controller + HUD component. The debug panel is hidden while playing (F2 shows it).
 const game = engine ? new GameController(engine) : null;
+if (game) {
+  game.setDebugMode(saved.mode === 'debug', false);
+  game.onModeChange = (mode) => save({ mode });
+}
 registerHud(engine, game);
 // Dev only: handles for console / browser-driven checks.
 if (import.meta.env.DEV) (window as unknown as Record<string, unknown>).__wargame = { engine, game };
@@ -149,6 +156,10 @@ Alpine.data('mapPanel', () => ({
   cycle: !!engine?.dayCycle,
   error: engineError,
   collapsed: saved.collapsed,
+  /** Debug mode -> game mode: back to the start menu. */
+  backToGame() {
+    game?.setDebugMode(false);
+  },
   toggleCollapsed() {
     this.collapsed = !this.collapsed;
     save({ collapsed: this.collapsed });

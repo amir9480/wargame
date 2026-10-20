@@ -4,6 +4,10 @@
 /* While playing the debug panel is hidden; F2 / the Debug button brings it back. */
 body.game-active:not(.show-debug) .panel { display: none; }
 
+/* Debug mode (view only): the panel's "back to game mode" button shows, nothing of the game UI. */
+.debug-only { display: none; }
+body.debug-mode .debug-only { display: block; }
+
 /* The debug panel stays usable over the start / pause menus (e.g. to change the map seed). */
 .panel { z-index: 25; }
 

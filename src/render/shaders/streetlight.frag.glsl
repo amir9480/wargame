@@ -20,7 +20,7 @@ void main() {
   vec3 ambient = mix(groundAmbient, skyAmbient, n.y * 0.5 + 0.5);
   vec3 lit = vColor * (ambient + sunColor * ndl);
   // Lit lamps are emissive: brighter than anything the sun can make.
-  float flicker = twinkleFar(vLamp, time, distance(cameraPosition, vWorldPos));
+  float flicker = twinkleFar(vLamp, time, distance(fogOrigin, vWorldPos));
   lit = mix(lit, vColor * 3.0 * flicker, vGlow * lampLevel);
 
   gl_FragColor = vec4(applyFog(lit, vWorldPos), 1.0);

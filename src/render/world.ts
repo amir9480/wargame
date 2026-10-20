@@ -315,7 +315,7 @@ export class World {
     const grid = map ? map.worldSize / 2 : 2e9;
     const near = play + (grid - play) * 0.25;
     const far = grid - 2;
-    for (const m of [...this.extraFogMaterials, terrainMat, waterMat, skirtMat, this.rocks.material, ...this.rocks.billboardMaterials, ...this.roads.materials, this.trees.material, this.trees.billboardMaterial, ...this.bases.materials, this.streetLights.material, ...this.buildings.materials, ...this.urban.materials, this.landmarks.material, this.power.material, ...this.particles.materials, ...this.cityModels.materials]) {
+    for (const m of [...this.extraFogMaterials, terrainMat, waterMat, skirtMat, this.rocks.material, ...this.rocks.billboardMaterials, ...this.roads.materials, this.trees.material, this.trees.billboardMaterial, ...this.bases.materials, this.streetLights.material, ...this.buildings.materials, ...this.urban.materials, this.landmarks.material, ...this.power.materials, ...this.particles.materials, ...this.cityModels.materials]) {
       m.uniforms.lodTint = lodTint; // LOD levels debug view (lodDebug.ts)
       m.uniforms.fogNear.value = near;
       m.uniforms.fogFar.value = far;

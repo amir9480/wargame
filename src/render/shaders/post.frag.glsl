@@ -107,7 +107,7 @@ void main() {
     // Shadows / AO darken the finished colour, which already has the aerial haze and ground mist in it: fade them with
     // the share of the surface's own light that survives the air (same terms as applyFog), so haze isn't darkened.
     if (region > 0.001) {
-      vec3 v = P - fogOrigin;
+      vec3 v = P - camPos; // same eye as applyFog (the viewing camera, not the frozen game camera)
       float dist = length(v);
       vec4 ap = texture(tAerial, aerialUvw(v / max(dist, 1e-3), sqrt(min(dist * aerialScale, 1.0)), apSize));
       float mist = (1.0 - exp(-dist * MIST_PER_M)) * exp(-max(P.y - MIST_BASE, 0.0) / MIST_HEIGHT) * MIST_MAX;

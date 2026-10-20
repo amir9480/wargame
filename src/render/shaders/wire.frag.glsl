@@ -11,14 +11,14 @@ varying float vCover;
 #include ./chunks/fog.glsl;
 
 // Wires fade out with distance: the share of a pixel they cover is the opacity, drawn as a screen-space dither (no blending
-// needed, so wires stay in the opaque pass) that the AA / post pass smooths. Fully gone beyond WIRE_FAR.
-#define WIRE_FADE_START 250.0
-#define WIRE_FAR 1100.0
+// needed, so wires stay in the opaque pass) that the AA / post pass smooths. wireFade = (fade start, fully gone) in metres per
+// material (pylon wires reach further than pole wires); the meshes are culled beyond that by their chunk's lodMax.
+uniform vec2 wireFade;
 
 void main() {
-  float dist = distance(cameraPosition, vWorldPos);
+  float dist = distance(fogOrigin, vWorldPos);
   float cover = clamp(vCover, 0.0, 1.0);
-  float alpha = cover * cover * (1.0 - smoothstep(WIRE_FADE_START, WIRE_FAR, dist));
+  float alpha = cover * cover * (1.0 - smoothstep(wireFade.x, wireFade.y, dist));
   // Interleaved gradient noise: a stable, evenly spread threshold per pixel.
   float noise = fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));
   if (alpha < 0.999 && alpha <= noise) discard;

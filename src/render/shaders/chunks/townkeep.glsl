@@ -4,6 +4,11 @@
 uniform sampler2D tNoise; // 64x64 blue noise, b = noise value
 varying vec2 vTown;
 
+/** Additive lights (volumes, pools): brightness share of this light in a cross-fade (1 outside one). No noise needed, they add up. */
+float lightShare() {
+  return vTown.y == 0.0 ? 1.0 : vTown.x;
+}
+
 /** `pixel`: the pixel's position in the drawing buffer (gl_FragCoord.xy of the main view). */
 bool townKeep(vec2 pixel) {
   if (vTown.y == 0.0) return true;

@@ -59,6 +59,9 @@ and sends idle unengaged army to the nearest enemy structure (leaning towards th
 - `GameController` (src/ui): picking (units by screen distance, structures by footprint), box select, orders (RMB), placement ghost, control groups
   (Ctrl+1-9), H = base, P = pause, Del = sell, minimap, `hudState()`. HUD = Alpine `gameHud` (src/ui/hud.ts, markup `#hud` in index.html, hud.css), separate from the debug `mapPanel`;
   while playing `body.game-active` hides the debug panel unless F2 / Debug button (`show-debug`).
+- **Mode** (`GameController.debugMode`, `setDebugMode(on, persist)`; saved as `mode: 'game'|'debug'` in `wargame.settings`): `debug` = view-only map, no session,
+  no start menu / HUD (`s.debugMode`), no cinematic camera (free RTS camera), `body.debug-mode` shows the panel's "Back to game mode" button (`.debug-only`, `mapPanel.backToGame()`).
+  Chosen from the start menu's Mode selector.
 - Engine hooks: `addToScene`, `addFrameHook(dt)`, `canvas`, `viewCamera`, `heightAt`, `focusOn`.
 
 # Rendering (placeholder, `render/game/`)

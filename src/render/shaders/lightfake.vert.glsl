@@ -13,6 +13,7 @@ uniform float gridSize;
 #include ./chunks/signal.glsl;
 #include ./chunks/anim.glsl;
 
+#define POOL_DEFERRED_GAIN 0.2
 varying vec2 vUv;
 varying vec3 vColor;
 varying vec2 vTown;
@@ -21,6 +22,11 @@ void main() {
   vUv = uv;
   vTown = townFade();
   vColor = instanceColor * level;
+#ifdef FLAT
+  // A pool is added as is, a deferred light is multiplied with the (dark) surface colour: next to deferred volumes (lightSwitch.x > 0)
+  // the pool is dimmed to match, else it glares in the cross-fade band.
+  if (lightSwitch.x > 0.0) vColor *= POOL_DEFERRED_GAIN;
+#endif
 #ifdef SIGNAL
   vColor *= signalColor();
 #endif

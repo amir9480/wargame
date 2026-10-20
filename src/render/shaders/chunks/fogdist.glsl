@@ -1,8 +1,9 @@
 // Map-edge haze: the generated grid ends in a margin beyond the play area, and its edge would stand out against the sky.
 // Points melt into the horizon haze (fog.glsl) between fogNear and fogFar, measured as max(|x|, |z|) from the map
 // centre (square, like the grid), independent of the camera, so distant parts of the play area stay visible at any
-// zoom. Light passes that add light on top of the scene fade out over the same range. fogOrigin (gameview.glsl) is the
-// game camera: it stays put while the debug camera is frozen (see Engine.cameraFrozen).
+// zoom. Light passes that add light on top of the scene fade out over the same range. gameview.glsl's fogOrigin (the game
+// camera, frozen under the debug freeze: see Engine.cameraFrozen) is for LOD distances; the fog itself (fog.glsl) is measured
+// from the viewing camera.
 #include ./gameview.glsl;
 uniform float fogNear;
 uniform float fogFar;

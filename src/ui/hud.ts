@@ -11,6 +11,9 @@ export function registerHud(engine: Engine | null, game: GameController | null):
     /** Seed of the current map (start menu). */
     seed: null as number | null,
     level: 'normal' as 'easy' | 'normal' | 'hard',
+    /** Start menu mode selector: a skirmish, or the view-only debug mode. */
+    mode: 'game' as 'game' | 'debug',
+    wasDebug: false,
     debug: false,
     timer: 0,
 
@@ -26,13 +29,17 @@ export function registerHud(engine: Engine | null, game: GameController | null):
       this.ready = !!engine.terrain;
       this.seed = engine.terrain?.seed ?? null;
       this.s = game.hudState();
+      if (this.s.debugMode) this.mode = 'debug';
+      else if (this.wasDebug) this.mode = 'game'; // back from debug mode: the menu opens on "Game"
+      this.wasDebug = this.s.debugMode;
       // Looked up directly: `$refs` is not reliable from a timer callback / inside x-if.
       const mm = document.querySelector<HTMLCanvasElement>('#hud .minimap canvas');
       if (mm && this.s.active) game.drawMinimap(mm);
     },
 
     start() {
-      if (game?.start(this.level)) this.poll();
+      if (this.mode === 'debug') game?.setDebugMode(true);
+      else if (game?.start(this.level)) this.poll();
     },
 
     /** Start menu: generate a new map with a random seed (handled by the map generator panel's generate path). */

@@ -1,4 +1,4 @@
-// Aerial perspective shared by all map shaders: light scattered in by the air between the game camera and the point,
+// Aerial perspective shared by all map shaders: light scattered in by the air between the viewing camera and the point,
 // and the share of the point's own light that gets through, from the baked 3D LUT (atmosphere.ts). Towards the grid
 // edge (fogdist.glsl) points fade to the solid horizon haze, the colour the sky dome shows below the horizon.
 // Uniforms: `...env.fog` (FogUniforms) plus fogNear / fogFar / fogOrigin.
@@ -23,7 +23,7 @@ vec3 horizonHaze(vec3 dir) {
 #define MIST_MAX 0.5
 
 vec3 applyFog(vec3 color, vec3 worldPos) {
-  vec3 v = worldPos - fogOrigin;
+  vec3 v = worldPos - cameraPosition; // the eye that draws (not fogOrigin): the one view effect that ignores the debug freeze
   float dist = length(v);
   vec4 ap = texture(tAerial, aerialUvw(v / max(dist, 1e-3), sqrt(min(dist * aerialScale, 1.0)), apSize));
   vec3 c = color * ap.a + ap.rgb;
