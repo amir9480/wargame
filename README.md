@@ -4,9 +4,9 @@
 
 **A modern-military real-time strategy skirmish, played on a brand-new procedurally generated battlefield every time.**
 
-[![Play Now](https://img.shields.io/badge/▶_PLAY_NOW-in_your_browser-2ea44f?style=for-the-badge)](https://YOUR_USER.github.io/wargame/)
+[![Play Now](https://img.shields.io/badge/▶_PLAY_NOW-in_your_browser-2ea44f?style=for-the-badge)](https://amir9480.github.io/wargame/)
 
-[![Deploy](https://img.shields.io/github/actions/workflow/status/YOUR_USER/wargame/pages.yml?branch=main&style=flat-square&logo=github&label=live%20build)](https://github.com/YOUR_USER/wargame/actions/workflows/pages.yml)
+[![Deploy](https://img.shields.io/github/actions/workflow/status/amir9480/wargame/pages.yml?branch=main&style=flat-square&logo=github&label=live%20build)](https://github.com/amir9480/wargame/actions/workflows/pages.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue?style=flat-square)](LICENSE)
 [![Genre](https://img.shields.io/badge/genre-RTS-d73a49?style=flat-square)](#-how-to-play)
 [![Players](https://img.shields.io/badge/players-1_vs_3_AI-orange?style=flat-square)](#-how-to-play)
@@ -20,7 +20,7 @@
 
 ## 🎮 Play
 
-**[▶ Launch the game](https://YOUR_USER.github.io/wargame/)** – nothing to download or install, it runs right in your browser.
+**[▶ Launch the game](https://amir9480.github.io/wargame/)** – nothing to download or install, it runs right in your browser.
 
 For the best experience use a desktop browser with hardware acceleration enabled (Chrome, Edge or Firefox) and a reasonably recent graphics card. Press **F11** for fullscreen.
 
@@ -84,7 +84,7 @@ Destroy every structure belonging to all three enemy commanders before they do t
 
 ## 🐛 Found a bug or have an idea?
 
-Please [open an issue](https://github.com/YOUR_USER/wargame/issues) – feedback is very welcome.
+Please [open an issue](https://github.com/amir9480/wargame/issues) – feedback is very welcome.
 
 ## 📄 License
 
